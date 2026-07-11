@@ -1,8 +1,11 @@
 # Tessera: Experiment Design
 
-**Status:** draft v0.1 — written before the simulator, deliberately: the
+**Status:** draft v0.2 — written before the simulator, deliberately: the
 apparatus serves these questions, not the reverse. Companion to
-PROTOCOL.md v0.4.
+PROTOCOL.md (v0.5). v0.2 records the first result the apparatus produced:
+H1a (heartbeat detection of stale clones) was **falsified** while building
+the M2 harness — see §1. A falsified hypothesis this early is the process
+working, not failing.
 
 ## 0. The claim under test
 
@@ -27,17 +30,25 @@ detection probability and detection latency, as functions of the
 adversary's capture-gap rate, the heartbeat interval T, and the swarm's
 message rate?
 
-**Hypotheses.**
-- H1a: A snapshot clone with per-message capture probability c < 1 is
-  detected with probability approaching 1 as messages elapse, with median
-  latency ≤ the expected time to its first capture gap plus one message
-  (the salt makes any single missed message permanent, PROTOCOL §5.2).
-- H1b: A *speaking* clone (both instances live) is detected within 1
-  message of the second instance's first send, independent of c.
-- H1c: A passive clone with c = 1 is never detected (the honest negative
-  from PROTOCOL §8 — the experiment should *confirm* the limit, not hide it).
-- H1d: Detection latency for silent divergence is bounded by heartbeat
-  interval T plus one delivery delay.
+**Hypotheses.** (H1a was *falsified* by the M2 prototype — kept here with
+its correction, because a revised hypothesis is a result.)
+- ~~H1a: A snapshot clone with capture probability c < 1 is detected as its
+  capture gaps, via heartbeat fingerprint divergence.~~ **FALSE.** A clone
+  frozen at a past position holds the *correct* fingerprint for it; being
+  behind is not being forked, so its heartbeat is indistinguishable from
+  an honest laggard's. Corrected claim (**H1a′**): a clone is detected
+  only when it **speaks** a contradiction at an already-committed slot;
+  a *silent* clone — stale or synced — is invisible to the transcript
+  layer. This widens H1c below.
+- H1b: A *speaking* clone (both instances live) is detected within ~1
+  message of its first divergent send, independent of c. (Confirmed in the
+  prototype at ≤ 2 chain positions; needs the full sweep to characterize.)
+- H1c: A *silent* clone is never detected, whether synced (c = 1) or
+  merely stale — the honest negative, now broader than PROTOCOL §8 first
+  admitted. The experiment must *confirm* this limit, not hide it.
+- H1d: Detection latency for an equivocation-induced fork is bounded by
+  the time to the next crossing message; for divergence noticed via
+  heartbeat, by interval T plus one delivery delay.
 
 **Independent variables.** Adversary type and parameters (§4); T ∈
 {1, 10, 60} s; per-agent message rate λ ∈ {0.01, 0.1, 1} msg/s; N ∈

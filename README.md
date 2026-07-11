@@ -33,6 +33,14 @@ loud, attributable failures.
 - **`test_sim.py`** — simulator smoke tests: lossless lockstep, Rung-1
   recovery under i.i.d. and burst loss, Rung-2 rejoin after a
   window-exceeding outage, partition healing, and seed determinism.
+- **`adversaries.py`** — adversary harness (EXPERIMENTS M2): the A1–A6
+  taxonomy (eavesdropper, key thief, clone, equivocator, impostor) as
+  parameterized programs, with `run_adversary_trial` for seeded runs.
+- **`test_adversaries.py`** — one test per RQ1 claim, including the honest
+  negatives: no false positives in honest runs, impostor never accepted,
+  speaking/stale clones caught as contradictions, **silent clones not
+  detected** (a finding that corrected PROTOCOL §8), equivocation forked
+  and attributed, and the key thief reading until its first capture gap.
 
 ## Running the tests
 

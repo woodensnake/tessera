@@ -109,6 +109,25 @@ class Wire:
         return self.header_bytes() + H(self.body)
 
 
+@dataclass(frozen=True)
+class Heartbeat:
+    """§6: header-only, does not advance the chain. The counter — not a
+    timestamp — is the freshness mechanism: swarm clock sync is not
+    assumable, and a clock-dependent liveness check fails open exactly
+    when a partitioned or GPS-denied swarm needs it."""
+    epoch: int
+    seq: int
+    sender: bytes
+    fp: bytes
+    counter: int
+    sig: bytes
+
+    def signed_payload(self) -> bytes:
+        return (b"tessera-hb" + struct.pack("!IQQ", self.epoch, self.seq,
+                                            self.counter)
+                + struct.pack("!B", len(self.sender)) + self.sender + self.fp)
+
+
 # --- receiver dispatch events (§6) ---
 
 @dataclass(frozen=True)
@@ -166,6 +185,27 @@ class QuorumRejected:
     epoch: int
     have: int
     need: int
+
+@dataclass(frozen=True)
+class StaleHeartbeat:
+    """§6 freshness: counter <= the last seen from this sender — a replayed
+    heartbeat, which would otherwise mask a dead or captured agent."""
+    sender: bytes
+
+@dataclass(frozen=True)
+class ChainDivergence:
+    """A heartbeat's fp disagrees with the wire we hold at that position:
+    its signer is on a different chain. Clone, fork, or hijack (§8)."""
+    sender: bytes
+    position: int
+
+@dataclass(frozen=True)
+class PeerAhead:
+    """Not an alarm — the honest liveness signal. The sender is further
+    along than we are, so we are behind and would not otherwise know."""
+    sender: bytes
+    epoch: int
+    seq: int
 
 @dataclass(frozen=True)
 class CloneEvidence:
@@ -226,6 +266,8 @@ class Member:
         self.window = window
         self.seen: dict[int, Wire] = {}   # last `window` accepted wires
         self.buffer: dict[int, Wire] = {}  # future messages awaiting a gap fill
+        self.hb_counter = 0                # our own heartbeat counter
+        self.hb_seen: dict[bytes, int] = {}  # highest counter seen per sender
 
     # --- key schedule (§5.2) ---
 
@@ -305,6 +347,50 @@ class Member:
         self.seen.pop(wire.seq - self.window, None)
         self.seq += 1
         return Delivered(wire.seq, wire.sender, plaintext)
+
+    # --- heartbeats (§6) ---
+
+    def heartbeat(self) -> Heartbeat:
+        self.hb_counter += 1
+        hb = Heartbeat(self.epoch, self.seq, self.id, self._fp(self.seq),
+                       self.hb_counter, b"")
+        return Heartbeat(hb.epoch, hb.seq, hb.sender, hb.fp, hb.counter,
+                         self.signing_key.sign(hb.signed_payload()))
+
+    def receive_heartbeat(self, hb: Heartbeat):
+        keys = self.roster.get(hb.sender)
+        if keys is None:
+            return BadSignature(hb.seq)
+        try:
+            keys.sig_pk.verify(hb.sig, hb.signed_payload())
+        except InvalidSignature:
+            return BadSignature(hb.seq)
+
+        if hb.counter <= self.hb_seen.get(hb.sender, 0):
+            return StaleHeartbeat(hb.sender)
+        self.hb_seen[hb.sender] = hb.counter
+
+        if hb.epoch != self.epoch:
+            return (PeerAhead(hb.sender, hb.epoch, hb.seq)
+                    if hb.epoch > self.epoch else EpochMismatch(self.epoch,
+                                                                hb.epoch))
+        if hb.seq > self.seq:
+            return PeerAhead(hb.sender, hb.epoch, hb.seq)
+
+        # The sender claims a position at or behind ours, so we can check its
+        # fingerprint against the history we hold. This is how a *silent*
+        # stale clone is caught: it can sign, but it cannot produce the
+        # fingerprint of a chain it fell off (§8).
+        if hb.seq == self.seq:
+            expected = self._fp(hb.seq)
+        else:
+            wire = self.seen.get(hb.seq)
+            if wire is None:
+                return None  # aged out of our window; nothing to compare
+            expected = wire.fp
+        if hb.fp != expected:
+            return ChainDivergence(hb.sender, hb.seq)
+        return None
 
     # --- Rung 1: retransmit (§7) ---
 
@@ -407,6 +493,12 @@ class Member:
                              ec.fp_close)
         self.seen.clear()
         self.buffer.clear()
+        # Heartbeat counters are per-epoch: a rejoining member restarts at 0,
+        # so peers must forget the old counters or reject its heartbeats as
+        # stale forever. The epoch number in the signed payload keeps a
+        # cross-epoch replay from being useful.
+        self.hb_counter = 0
+        self.hb_seen.clear()
         return EpochChanged(self.epoch, ec.op)
 
     @classmethod
@@ -431,4 +523,6 @@ class Member:
         m.window = window
         m.seen = {}
         m.buffer = {}
+        m.hb_counter = 0
+        m.hb_seen = {}
         return m

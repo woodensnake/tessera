@@ -1,7 +1,12 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.4 — nothing here is final; every section marked
+**Status:** design sketch, v0.5 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
+v0.5 corrects §8 with a finding from the M2 adversary harness: a *silent*
+clone (stale or synced) is not detectable by fingerprint — "behind" is not
+"forked", so a stale clone's heartbeat is indistinguishable from a
+laggard's. Clone detection relies on a *spoken* contradiction; the earlier
+"or heartbeat" claim was wrong.
 v0.4 incorporates what implementing §9 surfaced: identities are a pair of
 keypairs (sig + KEM), the receiver dispatch needs a cross-epoch case, a
 joiner's trust is forward-looking only, and epoch bundles need replay/
@@ -276,19 +281,25 @@ should be re-broadcast as content.
 
 The signed header + fingerprint makes equivocation self-incriminating:
 
-- **Clone / snapshot-restore:** a restored agent that *missed any traffic*
-  while dormant presents `fp` at a stale position — detected on its first
-  message or heartbeat; evict via §9. Be precise about the limit of this
-  claim: a clone restored with full state (`ck` + identity key) that has
-  captured **every message since** its snapshot can decrypt, advance, and
-  remain indistinguishable from the original for as long as it stays
-  passive — and epoch heals do *not* shake it off, because to the heal it
-  IS the member (it holds the identity key and receives the new epoch
-  secret like anyone else). Tessera detects such a clone only when it
-  speaks (next bullet) or the moment its capture ever gaps (salt makes
-  one missed message permanent, §5.2). Detecting a perfectly synced,
-  perfectly silent clone requires hardware attestation or behavioral
-  layers — out of scope, and no transcript scheme can do it.
+- **Clone / snapshot-restore:** a restored agent is detected on its first
+  **message** at a slot the swarm has already committed: the body differs,
+  so it is a signed contradiction (next bullet). Evict via §9.
+  *Correction, from implementing the M2 harness:* an earlier draft here
+  said "first message **or heartbeat**." The heartbeat half is wrong, and
+  the distinction is load-bearing. A clone frozen at a past position holds
+  the **correct** fingerprint for that position — being *behind* is not
+  being *forked* — so its heartbeat is indistinguishable from an honest
+  member that is merely lagging. A silent clone is therefore **not**
+  detectable by fingerprint at all, whether it is stale or perfectly
+  synced; only a spoken contradiction reveals it. This is broader than the
+  "perfectly synced, silent" exception the draft admitted: *any* silent
+  clone is invisible to the transcript layer, and catching one needs
+  hardware attestation or behavioral/liveness signals (e.g. one identity
+  answering from two places at once) — out of scope, and no transcript
+  scheme can do it. The rest of the original caveat stands: a full-state
+  clone (`ck` + identity keys) is not shaken off by epoch heals, because
+  to the heal it *is* the member; and the instant its capture ever gaps,
+  the salt makes the lockout permanent (§5.2).
 - **Two clones of one identity, both live:** both hold valid `ck`, so both
   produce valid messages — but the *second* one at the same `(E, n)` with
   different content is a signed contradiction. Any member can present the

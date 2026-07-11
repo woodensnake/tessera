@@ -29,8 +29,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from tessera import (
-    ContinuityBreak, Delivered, EpochChanged, EpochMismatch, Evicted, Fork,
-    Gap, Member, MemberKeys,
+    BadSignature, ChainDivergence, CloneEvidence, ContinuityBreak, Delivered,
+    EpochChanged, EpochMismatch, Evicted, Fork, Gap, Member, MemberKeys,
+    PeerAhead, StaleHeartbeat,
 )
 
 # ---------------------------------------------------------------- engine
@@ -161,6 +162,19 @@ class MMPP:
 # ---------------------------------------------------------------- metrics
 
 @dataclass
+class Detection:
+    """First alarm at an honest member (EXPERIMENTS §5). `latency` is measured
+    from the adversary's INJECTION instant, not its first action — the
+    stricter choice, so a lurking adversary gets no flattering numbers."""
+    kind: str            # Fork | CloneEvidence | ChainDivergence | ContinuityBreak
+    accuser: bytes
+    accused: bytes | None
+    at_time: float
+    latency: float
+    positions: int       # chain positions elapsed since injection
+
+
+@dataclass
 class Metrics:
     sent: int = 0
     suppressed_sends: int = 0
@@ -179,13 +193,34 @@ class Metrics:
     behind_at_end: int = 0
     swarm_dead: bool = False
     recovery_times: list = field(default_factory=list)
+    # --- adversary accounting (M2) ---
+    forged_accepted: int = 0       # MUST be 0: a forged wire was Delivered
+    stale_heartbeats: int = 0      # replayed heartbeats caught by counter
+    detections: list = field(default_factory=list)
+    adversary_reads: int = 0       # plaintexts an eavesdropper/thief recovered
+    adversary_blind_from: float | None = None  # when it lost the chain
+    culprit: bytes | None = None   # who was actually compromised
+    adversary: str | None = None   # taxonomy id (A1..A6), None = honest run
 
     def to_dict(self) -> dict:
-        d = {k: v for k, v in self.__dict__.items() if k != "recovery_times"}
+        skip = {"recovery_times", "detections", "culprit"}
+        d = {k: v for k, v in self.__dict__.items() if k not in skip}
         rt = sorted(self.recovery_times)
         d["recoveries"] = len(rt)
         d["recovery_p50"] = rt[len(rt) // 2] if rt else None
         d["recovery_max"] = rt[-1] if rt else None
+        first = self.detections[0] if self.detections else None
+        d["detected"] = first is not None
+        d["detection_kind"] = first.kind if first else None
+        d["detection_latency"] = first.latency if first else None
+        d["detection_positions"] = first.positions if first else None
+        d["detection_count"] = len(self.detections)
+        # attribution is correct only if the FIRST alarm names the actual
+        # culprit; naming an innocent is the RQ1 kill criterion
+        d["attribution_correct"] = (
+            None if first is None or self.culprit is None
+            else first.accused == self.culprit)
+        d["false_positive"] = self.adversary is None and bool(self.detections)
         return d
 
 # ---------------------------------------------------------------- swarm
@@ -240,6 +275,8 @@ class Agent:
         for ev in self.member.receive(wire):
             if isinstance(ev, Delivered):
                 self.swarm.metrics.delivered += 1
+                if getattr(wire, "forged", False):
+                    self.swarm.metrics.forged_accepted += 1  # MUST stay 0
             elif isinstance(ev, Gap):
                 self.swarm.metrics.gaps += 1
                 self._mark_behind()
@@ -250,6 +287,11 @@ class Agent:
                 self.swarm.request_ec_replay(self)
             elif isinstance(ev, Fork):
                 self.swarm.metrics.forks += 1  # must stay 0 in honest runs
+                self.swarm.record_detection("Fork", self.id, wire.sender,
+                                            ev.position)
+            elif isinstance(ev, CloneEvidence):
+                self.swarm.record_detection("CloneEvidence", self.id,
+                                            ev.sender, ev.seq)
         self._maybe_apply_pending_ec()
         self._check_recovered()
 
@@ -275,6 +317,8 @@ class Agent:
             self._arm_nack()
         elif isinstance(res, ContinuityBreak):
             self.swarm.metrics.continuity_breaks += 1  # must stay 0 honest
+            self.swarm.record_detection("ContinuityBreak", self.id,
+                                        ec.coordinator, ec.close_seq)
         elif isinstance(res, Evicted):
             self.alive = False
         self._check_recovered()
@@ -332,26 +376,36 @@ class Agent:
         if had_gap and not self.member.buffer and self.pending_ec is None:
             self.swarm.metrics.rung1_recoveries += 1
 
-    # --- heartbeats (sim-layer stand-in for PROTOCOL §6) ---
+    # --- heartbeats (PROTOCOL §6, real signed messages) ---
 
     def emit_heartbeat(self) -> None:
         if self.online and self.alive and not self.rejoining:
+            hb = self.member.heartbeat()
             for a in self.swarm.agents:
                 if a is not self:
-                    self.swarm.network.unicast(self.id, a.id, a.on_heartbeat,
-                                               self.member.epoch,
-                                               self.member.seq)
+                    self.swarm.network.unicast(self.id, a.id, a.on_heartbeat, hb)
 
-    def on_heartbeat(self, epoch: int, seq: int) -> None:
+    def on_heartbeat(self, hb) -> None:
         if not self.online or self.rejoining:
             return
-        if epoch > self.member.epoch:
+        ev = self.member.receive_heartbeat(hb)
+        if isinstance(ev, PeerAhead):
             self._mark_behind()
-            self.swarm.request_ec_replay(self)
-        elif epoch == self.member.epoch and seq > self.member.seq:
-            self.known_head = max(self.known_head, seq)
-            self._mark_behind()
-            self._arm_nack()
+            if ev.epoch > self.member.epoch:
+                self.swarm.request_ec_replay(self)
+            else:
+                self.known_head = max(self.known_head, ev.seq)
+                self._arm_nack()
+        elif isinstance(ev, ChainDivergence):
+            # a signer whose fingerprint disagrees with our history: the
+            # silent-clone tripwire (§8)
+            self.swarm.record_detection("ChainDivergence", self.id,
+                                        ev.sender, ev.position)
+        elif isinstance(ev, StaleHeartbeat):
+            self.swarm.metrics.stale_heartbeats += 1
+        elif isinstance(ev, BadSignature):
+            pass  # impostor: rejected, nothing to detect (§8)
+        self._check_recovered()
 
     def on_aged_out(self) -> None:
         if not self.rejoining and self.online:
@@ -392,6 +446,10 @@ class Swarm:
         self.total_commits = 0
         self.last_commit = 0.0
         self.last_ec = None
+        self.injected_at: float | None = None
+        self.injected_positions = 0
+        self.culprit: bytes | None = None
+        self.wiretap = None  # optional passive adversary (A1/A2)
 
         import os
         ids = [f"agent-{i:03d}".encode() for i in range(n)]
@@ -430,6 +488,8 @@ class Swarm:
         self.next_slot += 1
         self.total_commits += 1
         self.last_commit = self.sim.now
+        if self.wiretap is not None:
+            self.wiretap.on_broadcast(wire)
         for a in self.agents:
             self.network.unicast(agent.id, a.id, a.on_wire, wire)
 
@@ -452,8 +512,32 @@ class Swarm:
     def pick_peer(self, requester: Agent, prefer_lockstep: bool = False):
         pool = [a for a in self.agents
                 if a is not requester and a.alive and a.online
+                and not getattr(a, "is_adversary", False)
                 and (a.in_lockstep() if prefer_lockstep else True)]
         return self.sim.rng.choice(pool) if pool else None
+
+    # --- adversary accounting (M2) ---
+
+    def inject(self, culprit: bytes) -> None:
+        """Mark the instant an adversary enters. Detection latency is measured
+        from here (EXPERIMENTS §5)."""
+        self.injected_at = self.sim.now
+        self.injected_positions = self.total_commits
+        self.culprit = culprit
+
+    def record_detection(self, kind: str, accuser: bytes, accused: bytes | None,
+                         position: int) -> None:
+        if self.injected_at is None:
+            # an alarm with no adversary present is a false positive: the
+            # single best canary for dispatch bugs (EXPERIMENTS §5)
+            self.metrics.detections.append(
+                Detection(kind, accuser, accused, self.sim.now, 0.0, 0))
+            return
+        self.metrics.detections.append(Detection(
+            kind=kind, accuser=accuser, accused=accused,
+            at_time=self.sim.now,
+            latency=self.sim.now - self.injected_at,
+            positions=self.total_commits - self.injected_positions))
 
     # --- end-of-run accounting ---
 
@@ -461,8 +545,11 @@ class Swarm:
         m = self.metrics
         m.network_dropped = self.network.dropped
         m.behind_at_end = sum(1 for a in self.agents
-                              if a.alive and a.online and not a.in_lockstep())
+                              if a.alive and a.online
+                              and not getattr(a, "is_adversary", False)
+                              and not a.in_lockstep())
         m.swarm_dead = (duration - self.last_commit) > DEATH_STALL
+        m.culprit = self.culprit
         return m
 
 # ---------------------------------------------------------------- runner
