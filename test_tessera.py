@@ -4,20 +4,24 @@ import copy
 import os
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 from tessera import (
     NONCE, SALT_LEN, BadSignature, CloneEvidence, Delivered, Duplicate, Fork,
-    Gap, H, Member, Wire, kdf, LABEL_ADV,
+    Gap, H, Member, MemberKeys, Wire, kdf, LABEL_ADV,
 )
 
 
 def make_swarm(n=3, window=64):
-    keys = {f"agent-{i}".encode(): Ed25519PrivateKey.generate() for i in range(n)}
-    roster = {mid: sk.public_key() for mid, sk in keys.items()}
+    keys = {f"agent-{i}".encode(): (Ed25519PrivateKey.generate(),
+                                    X25519PrivateKey.generate())
+            for i in range(n)}
+    roster = {mid: MemberKeys(sk.public_key(), kk.public_key())
+              for mid, (sk, kk) in keys.items()}
     epoch_secret = os.urandom(32)
-    return [Member(mid, sk, roster, epoch_secret, window=window)
-            for mid, sk in keys.items()]
+    return [Member(mid, sk, kk, roster, epoch_secret, window=window)
+            for mid, (sk, kk) in keys.items()]
 
 
 def broadcast(members, wire):
@@ -169,6 +173,6 @@ def test_replay_dropped_and_equivocation_kept_as_evidence():
     assert events == [CloneEvidence(0, honest.id, events[0].first, events[0].second)]
     assert H(events[0].first.body) != H(events[0].second.body)
     # both wires verify under the same identity key: a signed contradiction
-    pub = judge.roster[honest.id]
+    pub = judge.roster[honest.id].sig_pk
     pub.verify(events[0].first.sig, events[0].first.signed_payload())
     pub.verify(events[0].second.sig, events[0].second.signed_payload())

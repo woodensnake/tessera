@@ -1,7 +1,13 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.3 — nothing here is final; every section marked
+**Status:** design sketch, v0.4 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
+v0.4 incorporates what implementing §9 surfaced: identities are a pair of
+keypairs (sig + KEM), the receiver dispatch needs a cross-epoch case, a
+joiner's trust is forward-looking only, and epoch bundles need replay/
+splice binding (quorum sigs cover the target epoch; seals are
+context-bound). Coordinator secret-equivocation is detected at the new
+epoch's first message, not prevented.
 v0.2 fixed six gaps found in review: insider forgery via header-only
 signatures, a broken join derivation, slot-contention key reuse,
 dictionary attacks through gaps, needless key retention in the retransmit
@@ -53,9 +59,12 @@ instead of silent weirdness.
    (sequencer node, token ring, leader from the coordination layer it
    already runs) is out of scope, exactly as MLS delegates ordering to its
    Delivery Service. OPEN: how gracefully we can degrade to causal order.
-2. **Long-term identities.** Every agent has an Ed25519 identity keypair,
-   with trust established out of band (provisioning, swarm CA, DID —
-   don't care).
+2. **Long-term identities.** Every agent's identity is a *pair* of
+   keypairs — Ed25519 for signatures and X25519 for receiving sealed
+   epoch secrets (§9) — with trust established out of band (provisioning,
+   swarm CA, DID — don't care). One keypair is not enough: signing and
+   KEM are different operations, a distinction "identity key," singular,
+   hid until implementation.
 3. **An eavesdropper may be strong.** We assume full packet capture is
    possible; confidentiality never *relies* on the attacker missing
    traffic. Gap-lockout is defense-in-depth, not the foundation.
@@ -196,6 +205,11 @@ Two details here are anti-footguns, not style:
    - **seq behind expected** → duplicate or replay; drop. If its content
      differs from what we saw at that position, keep it: it is signed
      evidence of cloning or equivocation (§8).
+   - **epoch differs from ours** (checked before any of the above) → an
+     *older* epoch is stale noise, drop; a *newer* epoch means we missed
+     an epoch change entirely and must rejoin (§7 Rung 2). This case was
+     missing from the dispatch until the prototype hit it: a spec with
+     epochs must say what a cross-epoch wire means.
 3. Every member — including pure listeners — advances the same chain, so
    the swarm's states stay identical after every message.
 
@@ -327,6 +341,11 @@ details:
   Both paths require what their recipients uniquely have: the joiner has
   the DH, the members have the chain. Joiner enters at `ck'_0` and
   **cannot derive anything earlier** — history-privacy for free.
+  Trust asymmetry, surfaced by implementation: a joiner has no history,
+  so it *cannot verify* `fp_close`, the roster, or the coordinator's
+  legitimacy — it trusts the bundle it is handed, and its guarantees are
+  forward-looking only (from `ck'_0` it is in lockstep). Joining is
+  therefore exactly as trustworthy as the coordinator selection, no more.
 - **Evict:** coordinator samples a *fresh* `epoch_secret'` (not derived
   from `ck`, which the evictee knows; the transcript stays bound via
   `fp_close`, §5.1) and sends it to each remaining member under **HPKE
@@ -347,6 +366,17 @@ details:
   PCS is bounded by identity-key integrity; there is no cryptographic
   cure for a stolen identity, only revocation and eviction.
   OPEN: heal cadence vs. swarm size tradeoff.
+
+Three integrity details for every epoch-change bundle, learned in
+implementation: (1) quorum signatures cover the *target epoch number*, so
+a captured EVICT bundle is inert if replayed after the epoch has moved on
+— it names an epoch nobody is entering. (2) The sealed per-member secrets
+are bound (as AEAD context) to the operation, roster, and `fp_close`, so
+a bundle cannot be spliced from parts of two others. (3) A coordinator
+that seals *different* secrets to different members forks the swarm at
+the new epoch's first message — detected by the normal fork dispatch, not
+prevented; a coordinator can always DoS the swarm it coordinates, and
+epoch-start fork detection is what keeps that sabotage loud.
 
 ## 10. Security properties
 
