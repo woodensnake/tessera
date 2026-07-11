@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use or build on this work, please cite it as below."
+title: "Tessera: Transcript-Bound Continuity for Agent Swarms"
+type: software
+authors:
+  - family-names: Petraroli
+    given-names: Alexander
+repository-code: "https://github.com/CHANGEME/tessera"
+abstract: >-
+  A group messaging layer for agent swarms in which the key schedule is
+  bound to the full message transcript, so that tampering, cloning,
+  equivocation, desync, and hijack surface as loud, attributable
+  cryptographic failures. Protocol specification, prototype, and
+  experiment design.
+keywords:
+  - multi-agent systems
+  - secure group messaging
+  - key ratcheting
+  - swarm security
+license: Apache-2.0
+version: 0.4.0
+date-released: 2026-07-11
