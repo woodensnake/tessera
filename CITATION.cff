@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: Petraroli
     given-names: Alexander
-repository-code: "https://github.com/CHANGEME/tessera"
+repository-code: "https://github.com/woodensnake/tessera"
 abstract: >-
   A group messaging layer for agent swarms in which the key schedule is
   bound to the full message transcript, so that tampering, cloning,
