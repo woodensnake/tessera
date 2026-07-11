@@ -25,6 +25,14 @@ loud, attributable failures.
 - **[EXPERIMENTS.md](EXPERIMENTS.md)** — the experiment design: research
   questions, falsifiable hypotheses, adversary taxonomy, metrics, and
   kill criteria for the planned evaluation.
+- **`sim.py`** — discrete-event simulator (EXPERIMENTS M1): honest swarm
+  on the real protocol code over lossy (i.i.d. / Gilbert–Elliott),
+  delaying, partitioning networks, with the §7 recovery ladder driven by
+  simulated timers. `python sim.py --n 25 --loss 0.02 --duration 600`
+  prints a metrics JSON. Adversaries land with M2.
+- **`test_sim.py`** — simulator smoke tests: lossless lockstep, Rung-1
+  recovery under i.i.d. and burst loss, Rung-2 rejoin after a
+  window-exceeding outage, partition healing, and seed determinism.
 
 ## Running the tests
 
