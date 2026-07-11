@@ -1,12 +1,17 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.5 — nothing here is final; every section marked
+**Status:** design sketch, v0.6 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
 v0.5 corrects §8 with a finding from the M2 adversary harness: a *silent*
 clone (stale or synced) is not detectable by fingerprint — "behind" is not
 "forked", so a stale clone's heartbeat is indistinguishable from a
 laggard's. Clone detection relies on a *spoken* contradiction; the earlier
 "or heartbeat" claim was wrong.
+v0.6 adds §11.8–11.9 from the M3 scaling sweep: at large N a correlated
+outage crossing the window triggers a swarm-wide rejoin storm (window is a
+1/N-shrinking time buffer; rejoin forces a global re-key that cascades).
+Fixes: window-in-time and rejoin-without-global-re-key. The recovery
+ladder's small-N "survivability" does not hold unqualified at scale.
 v0.4 incorporates what implementing §9 surfaced: identities are a pair of
 keypairs (sig + KEM), the receiver dispatch needs a cross-epoch case, a
 joiner's trust is forward-looking only, and epoch bundles need replay/
@@ -436,6 +441,25 @@ equivocates (OPEN: can we fingerprint the ordering service too?).
    dominate. Speculative advance with rollback, or the per-sender-lane
    design from (1), are the candidate fixes — this pressure is another
    reason (1) may be the real architecture rather than the fallback.
+8. **Rejoin storms at scale (MEASURED — RESULTS.md).** The simulation
+   found that at large N, a correlated outage that crosses the window
+   triggers a swarm-wide rejoin cascade: one laggard's rejoin forces a
+   global epoch re-key (§9), which strands every other mid-recovery
+   laggard, forcing them to rejoin in turn. At N=100 this is near-total
+   (mean ~96 rejoins, 100% end desynced) though never "dead". Two fixes,
+   both needed:
+   (a) **Window sized in time, not messages.** Aggregate throughput grows
+   with N, so a fixed W-messages buffer is a 1/N-shrinking *time* buffer.
+   The §12 time-floor must be the primary term, not the fallback.
+   (b) **Rejoin without global re-key.** Batch simultaneous rejoins into
+   one epoch change, or let a laggard resync from a signed checkpoint
+   without re-keying the group at all. Breaking the one-rejoin-one-rekey
+   coupling is what stops the cascade. This is the highest-value protocol
+   refinement the evaluation surfaced.
+9. **A too-lenient liveness metric.** `swarm_dead` ("no commit for 60 s")
+   misses the thrashing regime where the swarm commits but never
+   reconverges (`ended_behind` = 1.0). A "reconverged within T" metric is
+   the right health signal; add it before the next sweeps.
 
 ## 12. Parameters (initial guesses)
 

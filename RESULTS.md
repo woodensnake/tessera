@@ -20,16 +20,23 @@ findings decide it:
    (RQ3a). Rung-1 retransmit absorbs every gap, because with N peers each
    holding the last W ciphertexts, a laggard almost always finds a server.
    Zero rejoins, zero deaths, across i.i.d. and bursty loss.
-2. **The real limit is outage-vs-window, and the swarm survives crossing
-   it** (RQ3b). When a correlated wave of agents is unreachable for longer
-   than the window's *time span*, they can no longer Rung-1 recover and
-   rejoin (Rung 2) — in a mild storm — but the swarm never dies and stays
-   consistent (0% dead, forks/continuity-breaks 0 throughout).
+2. **The real limit is outage-vs-window** (RQ3b). When a correlated wave of
+   agents is unreachable longer than the window's *time span*, they can no
+   longer Rung-1 recover and must rejoin.
 
-The design consequence is a single rule, and the spec already has the
-mechanism for it: **size the window's time-floor above the expected
-correlated-outage duration** (PROTOCOL §12's "64 msgs *or* 30 s" — the
-*or* is load-bearing).
+**Important qualifier, from the scaling sweep (see "Scaling" below):** at
+small N this rejoin is a *mild, survivable* cost (~6 rejoins, no death). At
+**N=100 it is not** — crossing the cliff triggers a swarm-wide rejoin storm
+(mean ~96 rejoins, 100% of trials end desynchronized). So the gate is GO on
+the *core idea*, but the deployable-envelope claim comes with two mandatory
+design rules, not one:
+- **Size the window in *time*, not message count** (the spec's §12 time-
+  floor, promoted from nicety to primary term — a message-count window is a
+  1/N-shrinking time buffer and is dangerous at scale).
+- **Do not let a rejoin trigger a global re-key** — batch simultaneous
+  rejoins, or resync laggards from a checkpoint without re-keying the group.
+  This is the storm's amplifier and the evaluation's most valuable
+  protocol-refinement pointer.
 
 ## RQ3a — Liveness under steady loss
 
@@ -114,6 +121,84 @@ Reading it:
   contradictory signed wires — which always exist — not the real-time
   event. PROTOCOL §8's "the signed headers identify the author" is true
   only once both headers are in hand.
+
+## Scaling (N ∈ {25, 100}) — and a serious finding
+
+The scaled churn sweep was meant to confirm the cliff is N-stable. It
+confirmed the cliff's *location* and **contradicted the "survivable" half
+of the N=15 story.** This is the most important result in this document,
+and it partially walks back the gate's rosy framing — recorded here in full
+rather than softened.
+
+**The cliff location is N-stable** (it tracks the window's *time* span
+`W/(N·rate)`), but that time span **shrinks as 1/N**, because aggregate
+throughput grows with N: a 64-*message* window is 21 s at N=15, 13 s at
+N=25, and just **3 s at N=100**. A fixed message-count window is a
+vanishing time buffer at scale.
+
+**The cliff severity scales catastrophically.** Past the cliff, mean
+rejoins per trial climb with the offline-wave size (40% of N), but
+*super-linearly* — and at N=100 the swarm melts down:
+
+| N | offline wave | mean rejoins past cliff | max | ended-behind | dead |
+|---|---|---|---|---|---|
+| 15  | 6   | ~6    | 12  | ≤ 6.5% | 0.000 |
+| 25  | 10  | ~11   | 20  | ≤ 19%  | 0.000 |
+| 100 | 40  | **~96** | **236** | **100%** | 0.000 |
+
+At N=100, crossing the cliff means mean rejoins of ~96 (with max 236 — far
+more than the 40 agents that went offline), and **100% of trials end with
+the swarm desynchronized**. Agents rejoin *repeatedly*: a returning
+laggard's rejoin forces a global epoch change, which strands every *other*
+mid-recovery laggard, forcing them to rejoin, which strands the first —
+H3b's predicted cascade, now observed and severe. It is a sustained storm,
+not a one-shot recovery.
+
+**Why `dead` still reads 0.000 — and why that metric is too lenient.** The
+swarm keeps committing (agent-000 stays online as an anchor), so the
+"no commit for 60 s" death test never fires. But `ended-behind = 1.000`
+says the swarm never *reconverges*. The honest read: at N=100 past the
+cliff the swarm is *thrashing, not dead* — which for practical purposes is
+just as broken. The `swarm_dead` metric should be supplemented by a
+"reconverged within T" metric; `ended_behind` is the real signal.
+
+**Two concrete design fixes this points at** (both now future-work in the
+spec, and both strengthen the paper):
+1. **Size the window in *time*, not messages** — or in messages ∝ N. The
+   spec's time-floor ("64 msgs *or* 30 s", §12) is not a nicety; it is the
+   load-bearing defense, and it must be the *primary* term at scale. A
+   pure message-count window is actively dangerous for large swarms.
+2. **Rejoin must not trigger a global re-key.** The storm's amplifier is
+   *one rejoin = one epoch change = every other laggard invalidated*.
+   Batching simultaneous rejoins into a single epoch change, or letting a
+   laggard resync from a signed checkpoint *without* re-keying the whole
+   group, breaks the cascade. This is the single most valuable protocol
+   refinement the evaluation surfaced.
+
+**Revised gate verdict:** still GO on the core idea — loss is a non-issue,
+the cliff is churn-driven and its trigger is understood — but the "cost
+cliff, not death cliff" claim now carries an explicit **"at small N"**
+qualifier, and the large-N regime is a design constraint (window-in-time +
+rejoin-batching), not a benign cost. A paper that reports this is stronger
+than one that stopped at N=15.
+
+### Scaling of detection (N=25)
+
+Detection was also re-run at N=25, and the honest negatives got *richer*:
+
+| adversary | det. rate N=5 → N=25 | attribution N=5 → N=25 |
+|---|---|---|
+| A3 speaking clone | 0.955 → **0.710** | 1.00 → 1.00 |
+| A4 equivocation   | 1.000 → 1.000 | 0.93 → **0.65** |
+
+Speaking-clone *detection* falls with N (more honest senders contend for
+the clone's target slot, so its contradiction more often lands as a
+plausible current-slot message), and equivocation *attribution* falls with
+N (more innocent members cross the fork first and get fingered by the
+first alarm). Detection of equivocation stays 100%; only clean first-alarm
+attribution degrades. Both sharpen C3: transcript binding's detection
+guarantees are real but **weaken as the swarm grows**, and the paper must
+say so.
 
 ## RQ2 — Cost (what continuity charges)
 
