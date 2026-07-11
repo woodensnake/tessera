@@ -26,17 +26,18 @@ findings decide it:
 
 **Important qualifier, from the scaling sweep (see "Scaling" below):** at
 small N this rejoin is a *mild, survivable* cost (~6 rejoins, no death). At
-**N=100 it is not** — crossing the cliff triggers a swarm-wide rejoin storm
-(mean ~96 rejoins, 100% of trials end desynchronized). So the gate is GO on
-the *core idea*, but the deployable-envelope claim comes with two mandatory
-design rules, not one:
+**N=100 the *legacy* path is not** — it triggers a swarm-wide rejoin storm
+(mean ~81–96 rejoins, 100% end desynchronized). The evaluation then *fixed*
+this (RQ3c): a **resync** path that re-admits a returning member without a
+global re-key turns the N=100 storm into 0 rejoins / 0% desynced, and is now
+the default. So the gate is GO, with the design lessons baked into the
+protocol:
+- **Resync, not re-key, for a returning member** (§7 Rung 1.5, implemented).
+  Decoupling rejoin from epoch change is what removes the cascade.
 - **Size the window in *time*, not message count** (the spec's §12 time-
-  floor, promoted from nicety to primary term — a message-count window is a
-  1/N-shrinking time buffer and is dangerous at scale).
-- **Do not let a rejoin trigger a global re-key** — batch simultaneous
-  rejoins, or resync laggards from a checkpoint without re-keying the group.
-  This is the storm's amplifier and the evaluation's most valuable
-  protocol-refinement pointer.
+  floor, promoted to primary term — a message-count window is a
+  1/N-shrinking time buffer). Complementary: it makes crossing the cliff
+  *rarer*; resync makes crossing it *survivable*. Still open.
 
 ## RQ3a — Liveness under steady loss
 
@@ -181,6 +182,31 @@ cliff, not death cliff" claim now carries an explicit **"at small N"**
 qualifier, and the large-N regime is a design constraint (window-in-time +
 rejoin-batching), not a benign cost. A paper that reports this is stronger
 than one that stopped at N=15.
+
+### RQ3c — The fix: resync (§7 Rung 1.5) eliminates the storm
+
+The storm's amplifier was *one rejoin = one global epoch re-key = every
+other laggard stranded*. The fix decouples them: a returning agent is a
+*known roster member*, not a stranger, so instead of a re-key, any lockstep
+peer seals the **current** chain state to the returner's identity key —
+minting no epoch and changing no one else's state. N returns then cost N
+independent resyncs, with nothing to cascade. Implemented as `use_resync`
+(now the default) and A/B'd at the worst cliff-crossing config (N=100,
+W=64, 40% offline for 40 s, well past the cliff):
+
+| variant | mean rejoins | mean resyncs | epoch changes | ended behind | dead |
+|---|---|---|---|---|---|
+| legacy (JOIN re-key) | **81.4** | 0 | 81.4 | **100%** | 0% |
+| resync (Rung 1.5)    | **0** | 40.1 | **0** | **0%** | 0% |
+
+The 40 offline agents produce ~40 resyncs — one clean recovery each — and
+the swarm **fully reconverges** (0% ended behind) with zero epoch churn.
+This is the complete arc the evaluation was for: it *found* the pathology
+at scale, and the proposed protocol fix *eliminates* it. Resync is now the
+default recovery path; legacy rejoin remains the fallback when the roster
+actually changed during the outage (`NeedsFullJoin`). The complementary
+window-in-time fix (moving the cliff outward) is still open — resync makes
+*crossing* the cliff survivable; window-in-time makes crossing it rarer.
 
 ### Scaling of detection (N=25)
 

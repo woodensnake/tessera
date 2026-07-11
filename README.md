@@ -9,7 +9,8 @@ loud, attributable failures.
 - **[PROTOCOL.md](PROTOCOL.md)** — the design (v0.4), including its open
   problems. Start here.
 - **`tessera.py`** — prototype of §5–§7 and §9: the per-message ratchet,
-  wire format, receiver dispatch, Rung-1 retransmit recovery, and the
+  wire format, receiver dispatch, Rung-1 retransmit recovery, **Rung-1.5
+  resync** (return a laggard with no re-key — the storm fix), and the
   epoch/membership layer (join, quorum eviction, heal, `fp_close`
   chaining, sealed epoch-secret delivery).
 - **`test_tessera.py`** — one test per §5–§7 claim: lockstep operation,

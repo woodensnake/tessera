@@ -1,7 +1,7 @@
 """Fast smoke tests for the sweep harness — structure and determinism, not
 the full 200-seed runs (those live in `python sweep.py`)."""
 
-from sweep import rq1, rq3, rq3_churn, bootstrap_ci
+from sweep import rq1, rq3, rq3_churn, rq3_fix, bootstrap_ci
 
 
 def test_bootstrap_ci_is_deterministic_and_ordered():
@@ -40,3 +40,14 @@ def test_rq3_churn_cliff_has_the_right_shape():
     assert rows[(32, 100)]["mean_rejoins"] > 0.0     # D >> W-secs
     # and nobody dies on either side of the cliff
     assert all(r["swarm_dead_rate"] == 0.0 for r in rows.values())
+
+
+def test_rq3_fix_resync_eliminates_the_storm():
+    # the headline fix: resync turns the rejoin storm into clean resyncs.
+    # N=60 (not 100) keeps CI fast while still storming under legacy.
+    rows = {r["variant"]: r for r in rq3_fix(seeds=4, n=60)}
+    assert rows["legacy"]["mean_rejoins"] > 15      # legacy cascades (storm)
+    assert rows["legacy"]["ended_behind_rate"] > 0.0
+    assert rows["resync"]["mean_rejoins"] == 0.0    # resync: no rejoins at all
+    assert rows["resync"]["mean_epoch_changes"] == 0.0
+    assert rows["resync"]["ended_behind_rate"] == 0.0  # fully reconverged

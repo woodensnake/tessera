@@ -1,6 +1,6 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.6 — nothing here is final; every section marked
+**Status:** design sketch, v0.7 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
 v0.5 corrects §8 with a finding from the M2 adversary harness: a *silent*
 clone (stale or synced) is not detectable by fingerprint — "behind" is not
@@ -10,8 +10,11 @@ laggard's. Clone detection relies on a *spoken* contradiction; the earlier
 v0.6 adds §11.8–11.9 from the M3 scaling sweep: at large N a correlated
 outage crossing the window triggers a swarm-wide rejoin storm (window is a
 1/N-shrinking time buffer; rejoin forces a global re-key that cascades).
-Fixes: window-in-time and rejoin-without-global-re-key. The recovery
-ladder's small-N "survivability" does not hold unqualified at scale.
+v0.7 *fixes* the storm: §7 gains **Rung 1.5 (resync)** — a returning
+roster member gets the current chain state sealed to its identity key, with
+no epoch change and no global re-key, so N returns cost N independent
+resyncs instead of a cascade. Measured N=100 past the cliff: ~81 rejoins /
+100% desynced → 0 rejoins / 0% desynced.
 v0.4 incorporates what implementing §9 surfaced: identities are a pair of
 keypairs (sig + KEM), the receiver dispatch needs a cross-epoch case, a
 joiner's trust is forward-looking only, and epoch bundles need replay/
@@ -267,12 +270,29 @@ receivers don't need stored keys because the lockout works in their
 favor: not having advanced *is* the decryption capability. NACKs should
 be rate-limited per peer; replay-on-request is an amplification vector.
 
-**Rung 2 — rejoin (beyond the window).** An agent offline longer than W
-messages cannot recover the chain, *by design* — that's the same property
-that locks out an eavesdropper. It re-authenticates with its identity key
-and is admitted as a joiner into a fresh epoch (§9). Missed content is
-gone for it. Forward secrecy and lockout are the same mechanism; you
-cannot have a backdoor for friends that isn't a backdoor.
+**Rung 1.5 — resync (beyond the window, roster unchanged).** An agent
+offline longer than W cannot recover the chain — but if it is *still in the
+roster*, it does not need to. Any lockstep peer seals its **current** chain
+state (`ck`, epoch, seq) to the returner's identity KEM key and signs the
+grant; the returner unseals, jumps to the current position, and is back in
+lockstep. Missed content is gone for it (the lockout holds — the sealed
+state is `ck` *now*, not the history). This is safe with no quorum and no
+epoch change: the grant opens only under the returner's identity key, and
+only re-admits an identity the roster already authorized. Crucially, it
+**mints no epoch and re-keys no one**, so — unlike Rung 2 — it cannot
+cascade: N returning agents cost N independent resyncs, not N epoch changes
+that strand each other. This rung was added after the M3 scaling sweep
+measured Rung-2's cascade (RESULTS.md RQ3b/RQ3c); it turns an N=100 rejoin
+storm (mean ~81 rejoins, 100% desynced) into ~40 clean resyncs, 0% desynced.
+
+**Rung 2 — rejoin (beyond the window, roster changed).** If membership
+moved while the agent was away (a join/evict/heal bumped the epoch and
+roster), the lightweight Rung-1.5 handoff is refused (`NeedsFullJoin`) and
+the agent re-authenticates with its identity key and is admitted as a
+joiner into a fresh epoch (§9). Missed content is gone for it. Forward
+secrecy and lockout are the same mechanism; you cannot have a backdoor for
+friends that isn't a backdoor. Rung 2 remains the path for a genuinely new
+member, and the fallback when the roster has changed under a returner.
 
 **Rung 3 — partition merge.** Two halves that both kept talking have
 forked chains that can never be merged (transcript binding forbids
@@ -451,11 +471,14 @@ equivocates (OPEN: can we fingerprint the ordering service too?).
    (a) **Window sized in time, not messages.** Aggregate throughput grows
    with N, so a fixed W-messages buffer is a 1/N-shrinking *time* buffer.
    The §12 time-floor must be the primary term, not the fallback.
-   (b) **Rejoin without global re-key.** Batch simultaneous rejoins into
-   one epoch change, or let a laggard resync from a signed checkpoint
-   without re-keying the group at all. Breaking the one-rejoin-one-rekey
-   coupling is what stops the cascade. This is the highest-value protocol
-   refinement the evaluation surfaced.
+   (b) **Rejoin without global re-key. — DONE, §7 Rung 1.5.** Implemented
+   as resync: a still-in-roster laggard gets the current chain state sealed
+   to its identity key by any peer, minting no epoch and re-keying no one.
+   A/B measured at N=100 past the cliff: legacy ~81 rejoins / 100% desynced
+   → resync 0 rejoins / 0% desynced (RESULTS.md RQ3c). This was the
+   highest-value refinement the evaluation surfaced, and it is now the
+   default recovery path. Fix (a), window-in-time, remains open and is
+   complementary (it moves the cliff; resync makes crossing it survivable).
 9. **A too-lenient liveness metric.** `swarm_dead` ("no commit for 60 s")
    misses the thrashing regime where the swarm commits but never
    reconverges (`ended_behind` = 1.0). A "reconverged within T" metric is

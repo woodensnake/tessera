@@ -35,17 +35,15 @@ including the honest negatives, which bound the claim.
   class of swarm attacks that are *silent* in a standard group channel into
   *attributable evidence*. ⟨HAVE⟩ construction (PROTOCOL §5–§8);
   claim-per-test suite; RQ1 detection sweep.
-- **C2 — The fragility's limit is characterized, and it has teeth at
-  scale.** The recovery ladder absorbs steady loss entirely (≤20%); the
-  real cliff is outage-vs-window. ⟨HAVE⟩ RQ3a, RQ3b at N∈{15,25,100}. The
-  scaling sweep *revised* this claim: the cliff *location* is N-stable
-  (tracks W-seconds) but its *severity* is not — at N=100, crossing it
-  triggers a swarm-wide rejoin storm (mean ~96 rejoins, 100% end
-  desynced), because (a) a fixed message-window is a 1/N-shrinking time
-  buffer and (b) rejoin forces a global re-key that cascades. Two design
-  rules follow — window-in-time and rejoin-batching — and reporting the
-  breakdown + fix is a *stronger* result than an unqualified "it's fine."
-  This is the honest-negative that most improves the paper.
+- **C2 — The fragility has teeth at scale, and we fix it.** The recovery
+  ladder absorbs steady loss entirely (≤20%); the real cliff is
+  outage-vs-window. ⟨HAVE⟩ RQ3a/b/c at N∈{15,25,100}. The full arc: the
+  scaling sweep *found* that at N=100 the legacy rejoin path cascades into a
+  swarm-wide storm (mean ~81–96 rejoins, 100% desynced) because rejoin
+  forced a global re-key; we then *fixed* it with a **resync** path (§7
+  Rung 1.5) that re-admits a returning member with no epoch change — A/B'd
+  at N=100 to 0 rejoins / 0% desynced. Find-it-then-fix-it is the strongest
+  possible version of this claim, and it is done, not proposed.
 - **C3 — Honest negatives, stated not hidden.** A *silent* clone is
   undetectable by the transcript layer; equivocation is always detected but
   first-alarm attribution can finger an innocent bystander (certain

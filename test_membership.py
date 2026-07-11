@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from tessera import (
     ContinuityBreak, Delivered, EpochChanged, EpochMismatch, Evicted, Fork,
-    Member, MemberKeys, QuorumRejected,
+    Member, MemberKeys, NeedsFullJoin, QuorumRejected, Resynced,
 )
 from test_tessera import broadcast, make_swarm
 
@@ -15,6 +15,58 @@ from test_tessera import broadcast, make_swarm
 def chat(swarm, sender_idx, text):
     wire = swarm[sender_idx].send(text)
     return broadcast(swarm, wire)
+
+
+def test_resync_returns_a_laggard_without_an_epoch_change():
+    """§7 Rung 1.5: a returning member jumps to the current chain state via a
+    peer's sealed grant. No epoch change, no re-key — the whole point, so it
+    cannot cascade into a storm."""
+    swarm = make_swarm(4)
+    for i in range(6):
+        chat(swarm, i % 4, f"msg {i}".encode())
+    laggard = swarm[3]
+    # simulate having fallen far behind: rewind its chain state
+    laggard.epoch, laggard.seq, laggard.ck = 0, 2, b"\x00" * 32
+    laggard.seen.clear()
+
+    peer = swarm[0]
+    grant = peer.make_resync(laggard.id)
+    assert grant is not None
+    res = laggard.apply_resync(grant)
+    assert res == Resynced(epoch=peer.epoch, seq=peer.seq)
+    assert laggard.ck == peer.ck        # now byte-identical to a lockstep peer
+    assert peer.epoch == 0              # nobody re-keyed; still epoch 0
+
+    # and the resynced laggard is back in lockstep: it sends and all accept
+    results = chat(swarm, 3, b"back in sync")
+    assert all(isinstance(ev[0], Delivered) for ev in results.values())
+    assert len({m.ck for m in swarm}) == 1
+
+
+def test_resync_refused_for_a_stranger():
+    """Resync only re-admits a roster member; a stranger gets None and must
+    take the quorum-gated JOIN path (§9)."""
+    swarm = make_swarm(3)
+    chat(swarm, 0, b"hello")
+    assert swarm[0].make_resync(b"not-a-member") is None
+
+
+def test_resync_falls_back_to_join_when_roster_changed():
+    """If membership changed during the outage, the lightweight handoff is not
+    enough — the returner is told to do a full JOIN."""
+    swarm = make_swarm(4)
+    chat(swarm, 0, b"before")
+    laggard = swarm[3]
+    laggard.seq, laggard.ck = 0, b"\x00" * 32  # fell behind
+
+    # meanwhile the swarm evicts someone: roster (and epoch) move
+    sigs = tuple(m.sign_proposal("EVICT", swarm[2].id) for m in swarm[:3])
+    ec, _ = swarm[0].make_epoch_change("EVICT", swarm[2].id, proposal_sigs=sigs)
+    for m in swarm[:2]:
+        m.apply_epoch_change(ec)
+
+    grant = swarm[0].make_resync(laggard.id)
+    assert isinstance(laggard.apply_resync(grant), NeedsFullJoin)
 
 
 def test_join_enters_lockstep_but_not_history():

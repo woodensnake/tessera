@@ -31,7 +31,8 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from tessera import (
     DEFAULT_WINDOW, BadSignature, ChainDivergence, CloneEvidence,
     ContinuityBreak, Delivered, EpochChanged, EpochMismatch, Evicted, Fork,
-    Gap, Member, MemberKeys, PeerAhead, StaleHeartbeat,
+    Gap, Member, MemberKeys, NeedsFullJoin, PeerAhead, Resynced,
+    StaleHeartbeat,
 )
 
 # ---------------------------------------------------------------- engine
@@ -185,6 +186,8 @@ class Metrics:
     rung1_recoveries: int = 0
     rejoin_requests: int = 0
     rejoins: int = 0
+    resync_requests: int = 0
+    resyncs: int = 0
     epoch_changes: int = 0
     messages_lost_to_laggards: int = 0
     continuity_breaks: int = 0
@@ -244,6 +247,7 @@ class Agent:
         self.pending_ec = None     # epoch change awaiting catch-up
         self.nack_pending = False
         self.rejoining = False
+        self.resyncing = False     # awaiting a Rung-1.5 resync grant
         self.behind_since: float | None = None
         self.known_head = 0        # highest same-epoch seq seen in heartbeats
 
@@ -261,6 +265,7 @@ class Agent:
     def _check_recovered(self) -> None:
         if (self.behind_since is not None and not self.member.buffer
                 and self.pending_ec is None and not self.rejoining
+                and not self.resyncing
                 and self.known_head <= self.member.seq
                 and self.member.epoch == self.swarm.epoch):
             self.swarm.metrics.recovery_times.append(
@@ -336,7 +341,7 @@ class Agent:
 
     def _nack(self) -> None:
         self.nack_pending = False
-        if not (self.online and self.alive) or self.rejoining:
+        if not (self.online and self.alive) or self.rejoining or self.resyncing:
             return
         rng_range = self.member.missing_range()
         if rng_range is None and self.pending_ec:
@@ -379,14 +384,14 @@ class Agent:
     # --- heartbeats (PROTOCOL §6, real signed messages) ---
 
     def emit_heartbeat(self) -> None:
-        if self.online and self.alive and not self.rejoining:
+        if self.online and self.alive and not self.rejoining and not self.resyncing:
             hb = self.member.heartbeat()
             for a in self.swarm.agents:
                 if a is not self:
                     self.swarm.network.unicast(self.id, a.id, a.on_heartbeat, hb)
 
     def on_heartbeat(self, hb) -> None:
-        if not self.online or self.rejoining:
+        if not self.online or self.rejoining or self.resyncing:
             return
         ev = self.member.receive_heartbeat(hb)
         if isinstance(ev, PeerAhead):
@@ -408,14 +413,54 @@ class Agent:
         self._check_recovered()
 
     def on_aged_out(self) -> None:
-        if not self.rejoining and self.online:
-            self.rejoining = True
-            self.swarm.metrics.messages_lost_to_laggards += max(
-                0, self.swarm.total_commits - self.member.seq
-                if self.member.epoch == self.swarm.epoch else 0)
+        if self.rejoining or self.resyncing or not self.online:
+            return
+        self.swarm.metrics.messages_lost_to_laggards += max(
+            0, self.swarm.total_commits - self.member.seq
+            if self.member.epoch == self.swarm.epoch else 0)
+        if self.swarm.use_resync:
+            self.resyncing = True           # Rung 1.5: no global re-key
+            self._request_resync()
+        else:
+            self.rejoining = True            # legacy Rung 2: JOIN epoch change
             self._request_rejoin()
 
-    # --- Rung 2: rejoin ---
+    # --- Rung 1.5: resync (no epoch change — kills the storm) ---
+
+    def _request_resync(self) -> None:
+        if not (self.resyncing and self.online):
+            return
+        self.swarm.metrics.resync_requests += 1
+        peer = self.swarm.pick_peer(self, prefer_lockstep=True)
+        if peer is not None:
+            self.swarm.network.unicast(self.id, peer.id, peer.serve_resync, self)
+        self.swarm.sim.after(REJOIN_RETRY, self._request_resync)
+
+    def serve_resync(self, requester: "Agent") -> None:
+        if not (self.online and self.in_lockstep()):
+            return  # requester's retry timer will try another peer
+        grant = self.member.make_resync(requester.id)
+        if grant is not None:
+            self.swarm.network.unicast(self.id, requester.id,
+                                       requester.on_resync_grant, grant)
+
+    def on_resync_grant(self, grant) -> None:
+        if not self.resyncing:
+            return
+        res = self.member.apply_resync(grant)
+        if isinstance(res, Resynced):
+            self.resyncing = False
+            self.known_head = 0
+            self.swarm.metrics.resyncs += 1
+            self._check_recovered()
+        elif isinstance(res, NeedsFullJoin):
+            # membership moved during the outage: fall back to the JOIN path
+            self.resyncing = False
+            self.rejoining = True
+            self._request_rejoin()
+        # BadSignature / None: ignore; the retry timer re-requests
+
+    # --- Rung 2: rejoin (JOIN epoch change — fallback / legacy) ---
 
     def _request_rejoin(self) -> None:
         if not (self.rejoining and self.online):
@@ -439,8 +484,9 @@ class Swarm:
     """Owns the agents, the perfect sequencer, and the metrics."""
 
     def __init__(self, sim: Sim, network: Network, n: int,
-                 window: int = DEFAULT_WINDOW):
+                 window: int = DEFAULT_WINDOW, use_resync: bool = True):
         self.sim, self.network = sim, network
+        self.use_resync = use_resync  # Rung 1.5 vs legacy JOIN-based rejoin
         self.metrics = Metrics()
         self.epoch = 0
         self.next_slot = 0
@@ -560,7 +606,7 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
               burst_len: float | None = None, bursty_traffic: bool = False,
               partitions: list[Partition] = (),
               offline_windows: dict | None = None,
-              window: int = DEFAULT_WINDOW) -> dict:
+              window: int = DEFAULT_WINDOW, use_resync: bool = True) -> dict:
     """One seeded trial; returns the metrics dict. offline_windows maps
     member id -> (start, end) during which that agent is unreachable."""
     sim = Sim(seed)
@@ -568,7 +614,7 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
                   if burst_len else IIDLoss(loss))
     network = Network(sim, loss_model, partitions=partitions)
     traffic = MMPP(rate) if bursty_traffic else Poisson(rate)
-    swarm = Swarm(sim, network, n, window=window)
+    swarm = Swarm(sim, network, n, window=window, use_resync=use_resync)
     swarm.start_traffic(traffic, stop=duration - DRAIN)
     swarm.start_heartbeats(stop=duration - 5.0)
 

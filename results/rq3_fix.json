@@ -1,0 +1,22 @@
+[
+  {
+    "variant": "legacy",
+    "mean_rejoins": 85.275,
+    "mean_resyncs": 0,
+    "mean_epoch_changes": 85.325,
+    "ended_behind_rate": 1.0,
+    "swarm_dead_rate": 0.0,
+    "forks": 0,
+    "continuity_breaks": 0
+  },
+  {
+    "variant": "resync",
+    "mean_rejoins": 0,
+    "mean_resyncs": 40.075,
+    "mean_epoch_changes": 0,
+    "ended_behind_rate": 0.0,
+    "swarm_dead_rate": 0.0,
+    "forks": 0,
+    "continuity_breaks": 0
+  }
+]

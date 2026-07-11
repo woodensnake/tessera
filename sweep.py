@@ -142,10 +142,12 @@ def rq3_churn(seeds=SEEDS, n=15, dur=400):
     for W in (32, 64, 128):
         for D in Ds:
             offline = _wave(n, wave_frac, start=100.0, duration=float(D))
+            # use_resync=False: this sweep characterizes the *legacy* rejoin
+            # storm (the problem). RQ3c (rq3_fix) shows resync curing it.
             cells.append(Cell(
                 f"W{W}/D{D}", "honest",
                 tuple({"n": n, "duration": dur, "rate": rate, "window": W,
-                       "offline_windows": offline}.items())))
+                       "offline_windows": offline, "use_resync": False}.items())))
     raw = run_cells(cells, seeds)
 
     rows = []
@@ -172,6 +174,51 @@ def _wave(n, frac, start, duration):
     k = max(1, int(n * frac))
     return {f"agent-{i:03d}".encode(): (start, start + duration)
             for i in range(1, k + 1)}  # skip agent-000 (kept as a stable peer)
+
+
+def rq3_fix(seeds=40, n=100):
+    """A/B the storm fix: at a cliff-crossing config (correlated outage well
+    past the window), compare the legacy JOIN-based rejoin against Rung-1.5
+    resync. The claim is that resync — which mints no epoch and re-keys no one
+    — eliminates the swarm-wide rejoin cascade."""
+    dur = 300
+    offline = _wave(n, 0.4, start=100.0, duration=40.0)  # deep past the cliff
+    base = {"n": n, "duration": dur, "rate": 0.2, "window": 64,
+            "offline_windows": offline}
+    cells = [
+        Cell("legacy", "honest", tuple({**base, "use_resync": False}.items())),
+        Cell("resync", "honest", tuple({**base, "use_resync": True}.items())),
+    ]
+    raw = run_cells(cells, seeds)
+    rows = []
+    for label in ("legacy", "resync"):
+        t = raw[label]
+        rows.append(dict(
+            variant=label,
+            mean_rejoins=statistics.mean(x["rejoins"] for x in t),
+            mean_resyncs=statistics.mean(x["resyncs"] for x in t),
+            mean_epoch_changes=statistics.mean(x["epoch_changes"] for x in t),
+            ended_behind_rate=statistics.mean(1.0 if x["behind_at_end"] > 0
+                                              else 0.0 for x in t),
+            swarm_dead_rate=statistics.mean(1.0 if x["swarm_dead"] else 0.0
+                                            for x in t),
+            forks=sum(x["forks"] for x in t),
+            continuity_breaks=sum(x["continuity_breaks"] for x in t)))
+    return rows
+
+
+def report_rq3_fix(rows):
+    lines = ["## RQ3c — Storm fix: resync vs legacy rejoin (N=100, past cliff)", "",
+             "| variant | mean rejoins | mean resyncs | epoch chg | "
+             "ended behind | dead | forks | cbreaks |",
+             "|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(
+            f"| {r['variant']} | {r['mean_rejoins']:.1f} | "
+            f"{r['mean_resyncs']:.1f} | {r['mean_epoch_changes']:.1f} | "
+            f"{r['ended_behind_rate']:.2f} | {r['swarm_dead_rate']:.2f} | "
+            f"{r['forks']} | {r['continuity_breaks']} |")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- RQ1
@@ -297,6 +344,9 @@ def main():
         json.dump(churn, open(os.path.join(RESULTS, "rq3_churn.json"), "w"),
                   indent=2)
         print(report_rq3_churn(churn), "\n")
+        fix = rq3_fix()
+        json.dump(fix, open(os.path.join(RESULTS, "rq3_fix.json"), "w"), indent=2)
+        print(report_rq3_fix(fix), "\n")
     if which in ("rq1", "all"):
         rows = rq1()
         json.dump(rows, open(os.path.join(RESULTS, "rq1.json"), "w"), indent=2)

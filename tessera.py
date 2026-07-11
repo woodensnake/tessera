@@ -214,6 +214,44 @@ class CloneEvidence:
     first: Wire
     second: Wire
 
+@dataclass(frozen=True)
+class Resynced:
+    """A returning member jumped to the current chain position via a peer's
+    sealed grant — no epoch change, no global re-key (§7 Rung 1.5)."""
+    epoch: int
+    seq: int
+
+@dataclass(frozen=True)
+class NeedsFullJoin:
+    """Resync refused: the roster changed while the member was away, so a
+    lightweight state handoff is not enough — fall back to a real JOIN (§9)."""
+    reason: str
+
+@dataclass(frozen=True)
+class ResyncGrant:
+    """§7 Rung 1.5: a lockstep peer seals the *current* chain state to a
+    still-in-roster member that fell beyond the retransmit window. Unlike a
+    rejoin, this changes no one else's state and mints no epoch — so it cannot
+    cascade into a swarm-wide storm. Safe because the sealed state opens only
+    under the returner's identity KEM key, and only a roster member's signed
+    grant is accepted."""
+    returner: bytes
+    epoch: int
+    seq: int
+    roster_hash: bytes
+    eph: bytes
+    ct: bytes
+    grantor: bytes
+    sig: bytes
+
+    def signed_bytes(self) -> bytes:
+        return (b"tessera-resync" + self.returner + struct.pack("!IQ", self.epoch,
+                self.seq) + self.roster_hash + self.eph + self.ct + self.grantor)
+
+    def context(self) -> bytes:
+        return (b"tessera-resync-ctx" + self.returner
+                + struct.pack("!IQ", self.epoch, self.seq) + self.roster_hash)
+
 
 def proposal_bytes(op: str, new_epoch: int, subject: bytes | None) -> bytes:
     return (LABEL_PROP + op.encode() + b"\x00"
@@ -500,6 +538,48 @@ class Member:
         self.hb_counter = 0
         self.hb_seen.clear()
         return EpochChanged(self.epoch, ec.op)
+
+    # --- §7 Rung 1.5: resync a returning member without a global re-key ---
+
+    def make_resync(self, returner_id: bytes) -> ResyncGrant | None:
+        """Lockstep peer seals its current chain state to a returning member.
+        Returns None if the returner is not in our roster (a stranger must do a
+        real JOIN, §9) — resync only re-admits an already-authorized identity."""
+        keys = self.roster.get(returner_id)
+        if keys is None:
+            return None
+        r_hash = roster_hash(self.roster)
+        grant = ResyncGrant(returner_id, self.epoch, self.seq, r_hash,
+                            b"", b"", self.id, b"")
+        eph, ct = seal(keys.kem_pk, self.ck, grant.context())
+        grant = ResyncGrant(returner_id, self.epoch, self.seq, r_hash, eph, ct,
+                            self.id, b"")
+        return ResyncGrant(returner_id, self.epoch, self.seq, r_hash, eph, ct,
+                           self.id, self.signing_key.sign(grant.signed_bytes()))
+
+    def apply_resync(self, grant: ResyncGrant):
+        if grant.returner != self.id:
+            return None
+        grantor = self.roster.get(grant.grantor)
+        if grantor is None:
+            return BadSignature(grant.seq)
+        try:
+            grantor.sig_pk.verify(grant.sig, grant.signed_bytes())
+        except InvalidSignature:
+            return BadSignature(grant.seq)
+        # A lightweight handoff is only valid if we still agree on the roster.
+        # If membership changed while we were away, the epoch and roster moved
+        # and we need the full JOIN path instead.
+        if grant.roster_hash != roster_hash(self.roster):
+            return NeedsFullJoin("roster changed during outage")
+        ck = open_sealed(self.kem_key, grant.eph, grant.ct, grant.context())
+        self.epoch = grant.epoch
+        self.seq = grant.seq
+        self.ck = ck
+        self.seen.clear()
+        self.buffer.clear()
+        self.hb_seen.clear()
+        return Resynced(self.epoch, self.seq)
 
     @classmethod
     def join(cls, member_id: bytes, signing_key: Ed25519PrivateKey,
