@@ -88,9 +88,12 @@ including the honest negatives, which bound the claim.
 - **Fig 2 — detection-latency CDF per adversary.** From RQ1. ⟨HAVE data⟩
   ⟨NEED plot⟩.
 - **Fig 3 — the detection-capability matrix.** Rows A1–A6 × columns
-  {Tessera, MLS, pairwise-ratchet, signed-no-chain}; cells =
-  detected?/attributed?/cost. The single most persuasive object in the
-  paper. ⟨HAVE⟩ Tessera column; ⟨NEED⟩ baseline columns (RQ4).
+  {Tessera, MLS, pairwise-ratchet, signed-no-chain}. ⟨HAVE⟩ analytical
+  version in RESULTS.md RQ4 — Tessera uniquely gets A3 (clone) and A4
+  (app-msg equivocation); ties on A5; the rest are confidentiality/reject.
+  ⟨NEED⟩ optional: an OpenMLS shim to turn the MLS column from analytical
+  to measured (deferrable per EXPERIMENTS §7; the paper can ship analytical
+  with the RFC-9420 caveat).
 - **Fig 4 — loss is a non-issue.** Rung-resolution vs loss, i.i.d. + burst,
   flat at 100% Rung-1. From RQ3a. ⟨HAVE data⟩ ⟨NEED plot⟩.
 - **Fig 5 — the churn cliff.** any-rejoin / mean-rejoins vs outage D, one

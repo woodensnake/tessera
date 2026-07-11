@@ -140,6 +140,51 @@ crypto you already pay for. Epoch changes cost O(N) at the coordinator (one
 seal per member; ~3.6 ms at N=100) — negligible at the ~15-minute heal
 cadence, and reducible to O(log N) with the MLS tree if N grows large.
 
+## RQ4 — Detection-capability matrix (analytical)
+
+This is the Fig-3 object. It is an **analytical** comparison, not a measured
+one (EXPERIMENTS §7's documented fallback: an in-process OpenMLS shim is
+>2 days of Rust plumbing; the reasoning below is what it would confirm).
+Cells: ✓✓ = detected **and** third-party-attributable · ✓ = detected, not
+cleanly attributable · ⊘ = confidentiality handles it, nothing to detect ·
+✗ = undetected · — = rejected outright. MLS claims pending a check against
+RFC 9420; the load-bearing distinction (application-message binding) is
+robust.
+
+| adversary | Tessera | MLS | pairwise Double Ratchet | signed, no chain |
+|---|---|---|---|---|
+| A1 eavesdropper       | ⊘ | ⊘ | ⊘ | ⊘ |
+| A2 key thief (synced) | ✗ but **gap-locked** | ✗, PCS at next commit | ✗ | ✗ |
+| A3 clone (speaks)     | **✓✓** | ✗ | ✗ | ✗ |
+| A4 app-msg equivocation | **✓** (✓✓ w/ wire pair) | ✗ (app layer) | ✗ | ✗ |
+| A5 malicious coordinator | ✓✓ (epoch-start fork) | ✓✓ (confirmation tag) | n/a | n/a |
+| A6 impostor (no keys) | — | — | — | — |
+
+The three columns that matter:
+
+- **A3 (clone) is Tessera-unique.** No scheme that secures only the *key*
+  and not the *message transcript* can notice that one identity is speaking
+  from two histories: MLS, a pairwise ratchet, and a bare signed channel all
+  accept a validly-keyed clone's messages. Tessera catches the contradiction
+  because the chain binds content. This is the headline differentiator.
+- **A4 (application-message equivocation) is Tessera's other gap-filler.**
+  MLS's confirmation tag binds the transcript of *group operations*, so it
+  catches a coordinator equivocating on membership (A5) — but application
+  messages ride the secret tree unbound to any shared transcript, so
+  member-to-member app-layer equivocation slips through. Tessera binds every
+  message, so it forks and is caught.
+- **A2 (key thief): nobody "detects" a passive thief**, but Tessera alone
+  turns any future capture gap into permanent lockout (the salted chain),
+  where MLS/others let the thief ride until the next epoch/commit regardless
+  of gaps. Different guarantee, in Tessera's favor, for the disconnected-
+  swarm threat model.
+
+Where Tessera does **not** win: A5 (MLS matches it), A6 (everyone rejects),
+A1 (confidentiality's job). The honest read is that Tessera is not a better
+confidentiality or group-key scheme — it is a *continuity* layer that adds
+exactly the A3/A4 detections the others structurally cannot provide, at the
+~1/26-signature cost of RQ2.
+
 ## What these results change
 
 - EXPERIMENTS H3b is revised: the liveness cliff is **churn-driven, not
