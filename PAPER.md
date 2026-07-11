@@ -46,11 +46,14 @@ including the honest negatives, which bound the claim.
   first-alarm attribution can finger an innocent bystander (certain
   attribution needs the contradictory-wire pair). ⟨HAVE⟩ RQ1 A3-silent,
   A4 attribution breakdown.
-- **C4 — It is cheap and standard-shaped.** Per-message overhead is a
-  fingerprint + salt + signature (~88 B) and 3 KDF calls; the marginal cost
-  over a signed-but-unchained baseline is ~2 KDFs. ⟨NEED⟩ the RQ2 cost
-  accounting (op-counts, not wall-clock) and the baseline comparison —
-  small, not yet written.
+- **C4 — It is cheap and standard-shaped.** ⟨HAVE⟩ RQ2 (`cost.py`): the
+  marginal cost of binding over a signed-but-unchained baseline is +2 KDF
+  and +1 hash on send — 0.7 µs, ~1/26 of one Ed25519 signature — and +24
+  wire bytes. The signature dominates; the chain is essentially free.
+  Epoch changes are O(N) at the coordinator, negligible at heal cadence.
+  ⟨NEED⟩ still: the RQ4 baseline *columns* for the Fig-3 matrix (MLS /
+  pairwise-ratchet detection capability), which is separate from this
+  per-message cost comparison.
 
 ## Section plan
 
@@ -124,10 +127,41 @@ the whole argument for drafting now rather than waiting for data.
 
 ## Deniability (the objection to meet head-on)
 
-Tessera's messages are non-repudiable — the exact opposite of Signal's
-prized deniability. This is a deliberate choice for machine swarms:
-operators need *evidence* (who cloned, who equivocated), and agents have no
-human's need for plausible deniability. The paper states this as a design
-stance, not an oversight, and sketches the deniable variant
-(MAC-in-place-of-signature, losing third-party attribution) for settings
-that want it. ⟨HAVE⟩ argument; ⟨NEED⟩ one paragraph + the variant sketch.
+**The objection.** A Signal-shaped reviewer will note that Tessera's
+messages are *non-repudiable*: every wire carries an Ed25519 signature over
+`header || H(body)`, so any holder of a message can prove to a third party
+that a specific identity authored specific content. This is the exact
+opposite of the deniability that secure-messaging research has spent a
+decade engineering *in*. Left unaddressed, it reads as a novice mistake.
+
+**Why it is the right default here.** Deniability protects a *human* who may
+be coerced to reveal a conversation and wants to disavow it. That threat
+model does not transfer to a machine swarm. What swarm *operators* need is
+the opposite: durable, transferable *evidence* — which agent cloned itself,
+which equivocated, which was restored from a stale snapshot — so that a
+misbehaving member can be attributed and evicted, and so that a post-incident
+audit can assign responsibility. Non-repudiation is not a leak in this
+setting; it is the feature that makes §8's "attributable evidence" claim
+mean anything. Tessera's entire value proposition is that attacks become
+*evidence*, and evidence that anyone can forge or disavow is not evidence.
+The paper states this as a deliberate design stance, in the threat-model
+section, not buried.
+
+**For settings that do want deniability**, the construction degrades
+cleanly. Replace the per-message signature with a group-MAC keyed from the
+chain (`mk`-derived): every member can then verify a message came from
+*someone* holding the chain, and — crucially — every member can also *forge*
+one, which is precisely deniability. The cost is exactly the property we
+were selling: third-party attribution of clones and equivocators is lost
+(reduced to "a member did this," not "*this* member did this"), and the
+fork-attribution matrix (Fig 3) collapses a column. So deniability and
+attribution are a genuine either/or here, not a free axis — which is itself
+a clean thing to say in the paper. Default to attribution for swarms; offer
+the MAC variant as a documented mode for deployments that answer the
+threat-model question the other way.
+
+⟨HAVE⟩ argument and variant sketch. ⟨NEED⟩ nothing further for the workshop
+paper; a formal deniability/attribution impossibility-style statement (you
+cannot have transferable attribution and forgeability at once) would
+strengthen the later security-venue version and belongs with the formal
+track.

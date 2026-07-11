@@ -115,6 +115,31 @@ Reading it:
   event. PROTOCOL §8's "the signed headers identify the author" is true
   only once both headers are in hand.
 
+## RQ2 — Cost (what continuity charges)
+
+Operation counts (empirically instrumented for KDF/hash; one-per-op by
+construction for AEAD/signature/DH), converted to time with *illustrative*
+modern-x86 per-op costs. Regenerate with `python cost.py`; JSON in
+`results/rq2_cost.json`.
+
+Per message:
+
+| path | KDF | hash | AEAD | sign | verify | est. µs | wire B |
+|---|---|---|---|---|---|---|---|
+| Tessera send | 2 | 1 | 1 | 1 | 0 | 19.1 | 167 |
+| Tessera recv | 3 | 3 | 1 | 0 | 1 | 46.5 | 167 |
+| baseline send (signed, no chain) | 0 | 0 | 1 | 1 | 0 | 18.4 | 143 |
+| baseline recv | 0 | 0 | 1 | 0 | 1 | 45.4 | 143 |
+
+**C4 confirmed.** The transcript binding adds +2 KDF and +1 hash on send —
+**0.7 µs, ~3.6% of send cost, about 1/26 of one Ed25519 signature** — over
+a baseline that already signs for authenticity. Wire overhead is **+24
+bytes/message** (fingerprint 8 + salt 16). The signature dominates
+everything; the chain is, as predicted, essentially free relative to the
+crypto you already pay for. Epoch changes cost O(N) at the coordinator (one
+seal per member; ~3.6 ms at N=100) — negligible at the ~15-minute heal
+cadence, and reducible to O(log N) with the MLS tree if N grows large.
+
 ## What these results change
 
 - EXPERIMENTS H3b is revised: the liveness cliff is **churn-driven, not

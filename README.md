@@ -44,10 +44,16 @@ loud, attributable failures.
 - **`sweep.py`** — parameter sweeps (EXPERIMENTS M3): `python sweep.py all`
   runs RQ1 (detection), RQ3a (loss), and RQ3b (churn cliff) at 200
   seeds/config across all cores, writing `results/*.json` and markdown.
+- **`cost.py`** — RQ2 cost accounting: primitive op-counts per message /
+  heartbeat / epoch change and real wire bytes, vs a signed-no-chain
+  baseline. `python cost.py` prints the table; JSON in `results/`.
 - **[RESULTS.md](RESULTS.md)** — the M3 findings. Headline: the go/no-go
   gate is **GO** — steady loss up to 20% is fully absorbed by Rung-1
-  recovery, and the real liveness limit is a *survivable*, churn-driven
-  cost cliff at outage-vs-window, not a death cliff.
+  recovery, the real liveness limit is a *survivable*, churn-driven cost
+  cliff at outage-vs-window, and the binding's per-message cost is ~1/26 of
+  the signature already paid.
+- **[PAPER.md](PAPER.md)** — the workshop/preprint outline: claims C1–C4
+  mapped to evidence, figure list, and the ordered remaining work.
 
 ## Running the tests
 

@@ -1,0 +1,38 @@
+{
+  "per_message_send": {
+    "kdf": 2,
+    "hash": 1,
+    "aead": 1,
+    "sign": 1,
+    "verify": 0,
+    "dh": 0
+  },
+  "per_message_recv": {
+    "kdf": 3,
+    "hash": 3,
+    "aead": 1,
+    "sign": 0,
+    "verify": 1,
+    "dh": 0
+  },
+  "wire_bytes": 167,
+  "heartbeat_bytes": 105,
+  "baseline_wire_bytes": 143,
+  "epoch": [
+    {
+      "n": 5,
+      "coordinator_us": 197.28,
+      "bundle_bytes": 841
+    },
+    {
+      "n": 25,
+      "coordinator_us": 912.88,
+      "bundle_bytes": 3831
+    },
+    {
+      "n": 100,
+      "coordinator_us": 3596.38,
+      "bundle_bytes": 15081
+    }
+  ]
+}
