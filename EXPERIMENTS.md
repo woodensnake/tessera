@@ -109,14 +109,26 @@ often does the swarm stay live via Rung 1 (retransmit), degrade to Rung 2
 (rejoin), or die (rejoin storm / no quorum)? Where is the operating
 region's edge?
 
-**Hypotheses.**
+**GATE RESULT (M3): GO.** First sweep (200 seeds) done — see RESULTS.md.
+The gate asked whether realistic conditions sit past a liveness cliff;
+they do not. Summary of what the hypotheses became:
+- H3a **confirmed and then some**: not just p ≤ 1% but *all* loss up to
+  20% (i.i.d. and burst) resolves 100% at Rung 1, zero rejoins.
+- H3b **revised**: there is no *loss-driven* cliff. The cliff is
+  **churn-driven** — it appears when a correlated outage exceeds the
+  window's time span — and it is a *survivable cost cliff* (rejoin storm,
+  ~6 rejoins, ~2× cascade) not a death cliff: swarm-death rate is 0.000
+  across the whole grid. Design rule: `W_seconds > expected correlated
+  outage`.
+- H3c: partition path exercised via `test_partition_heals`; the
+  quorum-side/minority accounting still needs its own sweep.
+
+**Original hypotheses (kept for the record):**
 - H3a: For p ≤ 1% i.i.d. loss with W = 64/30 s, ≥ 99.9% of loss events
   resolve at Rung 1 with no epoch change.
-- H3b: Rung-2 events grow smoothly with p (no avalanche) up to some
-  p*; beyond p*, rejoin storms — a rejoin's epoch change invalidating
-  other laggards' catch-up, forcing more rejoins — produce a sharp
-  liveness cliff. Locating p* under burst loss is the experiment's most
-  important single number.
+- H3b: Rung-2 events grow smoothly with p up to some p*; beyond p*,
+  rejoin storms produce a sharp liveness cliff. *(The storm is real; its
+  trigger is outage-vs-window, not p.)*
 - H3c: A partition/heal cycle costs exactly one epoch change and loses
   no quorum-side messages; minority-side agents all re-enter via Rung 2.
 

@@ -1,0 +1,258 @@
+[
+  {
+    "model": "iid",
+    "loss": 0.001,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.005,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.01,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.02,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.05,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.1,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.15,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "iid",
+    "loss": 0.2,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.001,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.005,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.01,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.02,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.05,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.1,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.15,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  },
+  {
+    "model": "burst",
+    "loss": 0.2,
+    "rung1_only": 1.0,
+    "rung1_only_ci": [
+      1.0,
+      1.0
+    ],
+    "mean_rejoins": 0,
+    "max_rejoins": 0,
+    "mean_epoch_changes": 0,
+    "swarm_dead_rate": 0.0,
+    "ended_behind_rate": 0.0,
+    "total_forks": 0,
+    "total_continuity_breaks": 0
+  }
+]

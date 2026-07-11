@@ -41,6 +41,13 @@ loud, attributable failures.
   speaking/stale clones caught as contradictions, **silent clones not
   detected** (a finding that corrected PROTOCOL §8), equivocation forked
   and attributed, and the key thief reading until its first capture gap.
+- **`sweep.py`** — parameter sweeps (EXPERIMENTS M3): `python sweep.py all`
+  runs RQ1 (detection), RQ3a (loss), and RQ3b (churn cliff) at 200
+  seeds/config across all cores, writing `results/*.json` and markdown.
+- **[RESULTS.md](RESULTS.md)** — the M3 findings. Headline: the go/no-go
+  gate is **GO** — steady loss up to 20% is fully absorbed by Rung-1
+  recovery, and the real liveness limit is a *survivable*, churn-driven
+  cost cliff at outage-vs-window, not a death cliff.
 
 ## Running the tests
 

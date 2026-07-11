@@ -168,9 +168,14 @@ class Clone(Wiretap):
     def activate(self) -> None:
         self.active = True
         if self.speaks and self.stale:
-            # frozen slot was committed long ago; speaking a new body there is
-            # an uncontested contradiction. No race, so schedule immediately.
-            self.sim.after(0.5, lambda: self._speak_at(self.member.seq,
+            # Speak at the FROZEN slot after a delay long enough that the swarm
+            # has committed past it, so honest members hold seen[frozen] and
+            # catch the contradiction. Speaking at the live frontier instead
+            # would be a race: an uncontested wire at the current slot from a
+            # holder of the identity key is, cryptographically, just the victim
+            # sending — indistinguishable, hence not detected. Detection needs
+            # an ALREADY-COMMITTED slot.
+            self.sim.after(3.0, lambda: self._speak_at(self.member.seq,
                                                        self.member.ck))
 
     def on_broadcast(self, wire) -> None:
@@ -226,8 +231,12 @@ class Equivocator:
                if not getattr(a, "is_adversary", False) and a.id != self.agent.id]
         half = set(ids[: len(ids) // 2])
         other = set(ids[len(ids) // 2:])
-        wire_a = _tag_forged(m.send(b"equivocation-A"))
-        wire_b = _tag_forged(m.send(b"equivocation-B"))  # same seq, diff body
+        # NOT _tag_forged: both wires are validly signed by the equivocator.
+        # Delivering one is not "accepting a forgery" — the attack is the
+        # contradiction between them, caught as a Fork. forged_accepted is
+        # reserved for wires that should be cryptographically unacceptable.
+        wire_a = m.send(b"equivocation-A")
+        wire_b = m.send(b"equivocation-B")  # same seq, different body
         _inject(self.swarm, self.agent.id, wire_a, subset=half)
         _inject(self.swarm, self.agent.id, wire_b, subset=other)
         m.receive(wire_a)  # the attacker commits to one side

@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 .pytest_cache/
+
+# scratch sweep output (regenerable)
+results_full.txt

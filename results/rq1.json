@@ -1,0 +1,83 @@
+[
+  {
+    "adversary": "A3",
+    "n": 200,
+    "detection_rate": 0.955,
+    "median_latency": 0.5981107701832968,
+    "latency_ci": [
+      0.5408989622890914,
+      0.6372605006964136
+    ],
+    "median_positions": 1,
+    "max_positions": 5,
+    "attribution_correct_rate": 1,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  },
+  {
+    "adversary": "A3-stale",
+    "n": 200,
+    "detection_rate": 0.99,
+    "median_latency": 3.015009716100259,
+    "latency_ci": [
+      3.0144198525204047,
+      3.016434996076349
+    ],
+    "median_positions": 6.0,
+    "max_positions": 12,
+    "attribution_correct_rate": 1,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  },
+  {
+    "adversary": "A3-silent",
+    "n": 200,
+    "detection_rate": 0.0,
+    "median_latency": null,
+    "latency_ci": null,
+    "median_positions": null,
+    "max_positions": null,
+    "attribution_correct_rate": null,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  },
+  {
+    "adversary": "A4",
+    "n": 200,
+    "detection_rate": 1.0,
+    "median_latency": 2.020367614840204,
+    "latency_ci": [
+      2.0188725810563497,
+      2.0231122610173884
+    ],
+    "median_positions": 0.0,
+    "max_positions": 1,
+    "attribution_correct_rate": 0.93,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  },
+  {
+    "adversary": "A6",
+    "n": 200,
+    "detection_rate": 0.0,
+    "median_latency": null,
+    "latency_ci": null,
+    "median_positions": null,
+    "max_positions": null,
+    "attribution_correct_rate": null,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  },
+  {
+    "adversary": "A1",
+    "n": 200,
+    "detection_rate": 0.0,
+    "median_latency": null,
+    "latency_ci": null,
+    "median_positions": null,
+    "max_positions": null,
+    "attribution_correct_rate": null,
+    "false_positive_rate": 0,
+    "forged_accepted_total": 0
+  }
+]

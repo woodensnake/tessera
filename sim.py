@@ -29,9 +29,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from tessera import (
-    BadSignature, ChainDivergence, CloneEvidence, ContinuityBreak, Delivered,
-    EpochChanged, EpochMismatch, Evicted, Fork, Gap, Member, MemberKeys,
-    PeerAhead, StaleHeartbeat,
+    DEFAULT_WINDOW, BadSignature, ChainDivergence, CloneEvidence,
+    ContinuityBreak, Delivered, EpochChanged, EpochMismatch, Evicted, Fork,
+    Gap, Member, MemberKeys, PeerAhead, StaleHeartbeat,
 )
 
 # ---------------------------------------------------------------- engine
@@ -438,7 +438,8 @@ class Agent:
 class Swarm:
     """Owns the agents, the perfect sequencer, and the metrics."""
 
-    def __init__(self, sim: Sim, network: Network, n: int):
+    def __init__(self, sim: Sim, network: Network, n: int,
+                 window: int = DEFAULT_WINDOW):
         self.sim, self.network = sim, network
         self.metrics = Metrics()
         self.epoch = 0
@@ -459,7 +460,7 @@ class Swarm:
                   for mid, (sk, kk) in privs.items()}
         secret = os.urandom(32)
         self.agents = [Agent(self, mid, sk, kk,
-                             Member(mid, sk, kk, roster, secret))
+                             Member(mid, sk, kk, roster, secret, window=window))
                        for mid, (sk, kk) in privs.items()]
 
     def start_traffic(self, traffic, stop: float) -> None:
@@ -558,7 +559,8 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
               rate: float = 0.1, loss: float = 0.0,
               burst_len: float | None = None, bursty_traffic: bool = False,
               partitions: list[Partition] = (),
-              offline_windows: dict | None = None) -> dict:
+              offline_windows: dict | None = None,
+              window: int = DEFAULT_WINDOW) -> dict:
     """One seeded trial; returns the metrics dict. offline_windows maps
     member id -> (start, end) during which that agent is unreachable."""
     sim = Sim(seed)
@@ -566,7 +568,7 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
                   if burst_len else IIDLoss(loss))
     network = Network(sim, loss_model, partitions=partitions)
     traffic = MMPP(rate) if bursty_traffic else Poisson(rate)
-    swarm = Swarm(sim, network, n)
+    swarm = Swarm(sim, network, n, window=window)
     swarm.start_traffic(traffic, stop=duration - DRAIN)
     swarm.start_heartbeats(stop=duration - 5.0)
 
