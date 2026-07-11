@@ -4,3 +4,4 @@ __pycache__/
 
 # scratch sweep output (regenerable)
 results_full.txt
+scaled_out.txt

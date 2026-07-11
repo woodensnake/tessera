@@ -127,15 +127,14 @@ def rq3(seeds=SEEDS):
     return rows
 
 
-def rq3_churn(seeds=SEEDS):
+def rq3_churn(seeds=SEEDS, n=15, dur=400):
     """The cliff RQ3-loss did NOT find: it is driven by outage-vs-window, not
     packet loss. A wave of agents goes offline simultaneously for duration D;
     if D exceeds the window's time span they cannot Rung-1 recover and must
     rejoin — and if the wave is large, one rejoin's epoch change can strand
     the others mid-recovery, cascading into a rejoin storm. We sweep D against
     window W to locate that edge."""
-    import math
-    n, rate, dur = 15, 0.2, 400
+    rate = 0.2
     wave_frac = 0.4
     win_secs = {32: 32 / (n * rate), 64: 64 / (n * rate), 128: 128 / (n * rate)}
     Ds = [5, 15, 25, 40, 60, 100]
@@ -177,11 +176,11 @@ def _wave(n, frac, start, duration):
 
 # ---------------------------------------------------------------- RQ1
 
-def rq1(seeds=SEEDS):
+def rq1(seeds=SEEDS, n=5):
     """Detection latency distributions per adversary. Confirms the positives
     (clone/equivocation caught fast, attributed) and the negatives (silent
     clone, eavesdropper) hold across seeds, not just one lucky trial."""
-    base = dict(n=5, duration=300, rate=0.5)
+    base = dict(n=n, duration=300, rate=0.5)
     advs = ["A3", "A3-stale", "A3-silent", "A4", "A6", "A1"]
     cells = [Cell(a, "adversary", tuple({**base, "adversary": a}.items()))
              for a in advs]
@@ -266,9 +265,30 @@ def report_rq1(rows):
     return "\n".join(lines)
 
 
+def scaled():
+    """Breadth: do the M3 findings hold as the swarm grows? Detection at
+    N∈{25,100} and the churn cliff at N∈{25,100}. Fewer seeds at N=100 (each
+    trial is ~O(N²) work); the question there is the cliff's *shape*, not a
+    tight CI. Writes results/scaled_*.json."""
+    plan = [
+        ("rq1_n25",   lambda: rq1(seeds=100, n=25)),
+        ("rq3_n25",   lambda: rq3_churn(seeds=100, n=25, dur=400)),
+        ("rq3_n100",  lambda: rq3_churn(seeds=40, n=100, dur=300)),
+    ]
+    for name, fn in plan:
+        rows = fn()
+        json.dump(rows, open(os.path.join(RESULTS, f"scaled_{name}.json"), "w"),
+                  indent=2)
+        rep = report_rq1(rows) if name.startswith("rq1") else report_rq3_churn(rows)
+        print(f"### scaled/{name}\n{rep}\n", flush=True)
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     os.makedirs(RESULTS, exist_ok=True)
+    if which == "scaled":
+        scaled()
+        return
     if which in ("rq3", "all"):
         rows = rq3()
         json.dump(rows, open(os.path.join(RESULTS, "rq3.json"), "w"), indent=2)
