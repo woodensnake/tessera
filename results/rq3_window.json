@@ -1,0 +1,14 @@
+[
+  {
+    "variant": "count-only",
+    "mean_rejoins": 97.775,
+    "any_rejoin_rate": 1.0,
+    "ended_behind_rate": 1.0
+  },
+  {
+    "variant": "count+30s-floor",
+    "mean_rejoins": 0,
+    "any_rejoin_rate": 0.0,
+    "ended_behind_rate": 0.0
+  }
+]

@@ -304,7 +304,10 @@ class Agent:
         if not self.online:
             return
         if ec.op == "JOIN" and ec.subject == self.id and self.rejoining:
-            self.member = Member.join(self.id, self.sk, self.kk, ec)
+            old = self.member
+            self.member = Member.join(self.id, self.sk, self.kk, ec,
+                                      window=old.window,
+                                      window_secs=old.window_secs, clock=old._clock)
             self.rejoining = False
             self.pending_ec = None
             self.known_head = 0
@@ -484,7 +487,8 @@ class Swarm:
     """Owns the agents, the perfect sequencer, and the metrics."""
 
     def __init__(self, sim: Sim, network: Network, n: int,
-                 window: int = DEFAULT_WINDOW, use_resync: bool = True):
+                 window: int = DEFAULT_WINDOW, use_resync: bool = True,
+                 window_secs: float | None = None):
         self.sim, self.network = sim, network
         self.use_resync = use_resync  # Rung 1.5 vs legacy JOIN-based rejoin
         self.metrics = Metrics()
@@ -505,8 +509,10 @@ class Swarm:
         roster = {mid: MemberKeys(sk.public_key(), kk.public_key())
                   for mid, (sk, kk) in privs.items()}
         secret = os.urandom(32)
+        clock = (lambda: self.sim.now) if window_secs is not None else None
         self.agents = [Agent(self, mid, sk, kk,
-                             Member(mid, sk, kk, roster, secret, window=window))
+                             Member(mid, sk, kk, roster, secret, window=window,
+                                    window_secs=window_secs, clock=clock))
                        for mid, (sk, kk) in privs.items()]
 
     def start_traffic(self, traffic, stop: float) -> None:
@@ -606,7 +612,8 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
               burst_len: float | None = None, bursty_traffic: bool = False,
               partitions: list[Partition] = (),
               offline_windows: dict | None = None,
-              window: int = DEFAULT_WINDOW, use_resync: bool = True) -> dict:
+              window: int = DEFAULT_WINDOW, use_resync: bool = True,
+              window_secs: float | None = None) -> dict:
     """One seeded trial; returns the metrics dict. offline_windows maps
     member id -> (start, end) during which that agent is unreachable."""
     sim = Sim(seed)
@@ -614,7 +621,8 @@ def run_trial(n: int = 5, duration: float = 600.0, seed: int = 0,
                   if burst_len else IIDLoss(loss))
     network = Network(sim, loss_model, partitions=partitions)
     traffic = MMPP(rate) if bursty_traffic else Poisson(rate)
-    swarm = Swarm(sim, network, n, window=window, use_resync=use_resync)
+    swarm = Swarm(sim, network, n, window=window, use_resync=use_resync,
+                  window_secs=window_secs)
     swarm.start_traffic(traffic, stop=duration - DRAIN)
     swarm.start_heartbeats(stop=duration - 5.0)
 

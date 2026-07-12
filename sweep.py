@@ -176,6 +176,45 @@ def _wave(n, frac, start, duration):
             for i in range(1, k + 1)}  # skip agent-000 (kept as a stable peer)
 
 
+def rq3_window(seeds=40, n=100):
+    """Window-in-time (§11.8a): does a fixed real-time retention floor move the
+    cliff outward? At N=100 (20 msg/s), a 64-message window is only ~3 s of
+    buffer, so a 25 s outage crosses it badly. A 30 s time-floor should hold
+    regardless of N. Legacy rejoin (use_resync=False) so the cliff is visible
+    as rejoins rather than being absorbed by resync."""
+    dur = 250
+    offline = _wave(n, 0.4, start=100.0, duration=25.0)
+    base = {"n": n, "duration": dur, "rate": 0.2, "window": 64,
+            "offline_windows": offline, "use_resync": False}
+    cells = [
+        Cell("count-only", "honest", tuple({**base}.items())),
+        Cell("count+30s-floor", "honest",
+             tuple({**base, "window_secs": 30.0}.items())),
+    ]
+    raw = run_cells(cells, seeds)
+    rows = []
+    for label in ("count-only", "count+30s-floor"):
+        t = raw[label]
+        rows.append(dict(
+            variant=label,
+            mean_rejoins=statistics.mean(x["rejoins"] for x in t),
+            any_rejoin_rate=statistics.mean(1.0 if x["rejoins"] > 0 else 0.0
+                                            for x in t),
+            ended_behind_rate=statistics.mean(1.0 if x["behind_at_end"] > 0
+                                              else 0.0 for x in t)))
+    return rows
+
+
+def report_rq3_window(rows):
+    lines = ["## RQ3d — Window-in-time: does a real-time floor move the cliff?",
+             "", "| variant | mean rejoins | any-rejoin | ended behind |",
+             "|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['variant']} | {r['mean_rejoins']:.1f} | "
+                     f"{r['any_rejoin_rate']:.2f} | {r['ended_behind_rate']:.2f} |")
+    return "\n".join(lines)
+
+
 def rq3_fix(seeds=40, n=100):
     """A/B the storm fix: at a cliff-crossing config (correlated outage well
     past the window), compare the legacy JOIN-based rejoin against Rung-1.5
@@ -347,6 +386,10 @@ def main():
         fix = rq3_fix()
         json.dump(fix, open(os.path.join(RESULTS, "rq3_fix.json"), "w"), indent=2)
         print(report_rq3_fix(fix), "\n")
+        win = rq3_window()
+        json.dump(win, open(os.path.join(RESULTS, "rq3_window.json"), "w"),
+                  indent=2)
+        print(report_rq3_window(win), "\n")
     if which in ("rq1", "all"):
         rows = rq1()
         json.dump(rows, open(os.path.join(RESULTS, "rq1.json"), "w"), indent=2)

@@ -105,6 +105,34 @@ def test_tampered_message_rejected():
     assert swarm[1].receive(tampered) == [BadSignature(wire.seq)]
 
 
+def test_time_floor_retains_more_than_count_alone():
+    """§11.8a: with the same traffic, a receiver whose window has a real-time
+    floor retains wires that a count-only receiver evicts — the fix that keeps
+    the retransmit buffer a fixed real-time span regardless of throughput."""
+    clock = {"t": 0.0}
+    keys = {f"a{i}".encode(): (Ed25519PrivateKey.generate(),
+                               X25519PrivateKey.generate()) for i in range(2)}
+    roster = {mid: MemberKeys(sk.public_key(), kk.public_key())
+              for mid, (sk, kk) in keys.items()}
+    sec = os.urandom(32)
+    (aid, (ask, akk)), (bid, (bsk, bkk)) = list(keys.items())
+    count_only = Member(aid, ask, akk, roster, sec, window=2)
+    time_floor = Member(bid, bsk, bkk, roster, sec, window=2, window_secs=100.0,
+                        clock=lambda: clock["t"])
+    swarm = [count_only, time_floor]
+
+    for i in range(5):
+        clock["t"] = float(i)          # one second between messages
+        broadcast(swarm, count_only.send(f"m{i}".encode()))
+    # count-2 retains only the newest two; the 100 s floor keeps all five
+    assert set(count_only.seen.keys()) == {3, 4}
+    assert set(time_floor.seen.keys()) == {0, 1, 2, 3, 4}
+    # old entries DO evict once they fall outside the time floor too
+    clock["t"] = 200.0
+    broadcast(swarm, count_only.send(b"much later"))
+    assert 0 not in time_floor.seen and 5 in time_floor.seen  # aged past 100 s
+
+
 def test_window_recovery_after_transient_loss():
     """§7 Rung 1: a lagging member NACKs, peers replay raw ciphertexts, and
     the laggard walks itself forward using only its own retained chain key."""

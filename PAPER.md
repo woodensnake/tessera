@@ -126,6 +126,18 @@ Writing this collapsed the remaining work to a short, ordered list:
    the byzantine-sequencer study; the formal definitions + Tamarin model
    (these gate the *later* security-venue paper, not this one).
 
+**Update — both storm fixes done, and the sequencer idealization addressed.**
+Since this outline was written: (a) resync (§7 Rung 1.5) and window-in-time
+(§11.8a) both implemented and A/B'd — the N=100 storm goes to 0 rejoins by
+*either* mechanism, and they are complementary; (b) per-sender lanes
+(`lanes.py`) prototyped, proving convergence with no global sequencer. This
+converts the paper's central caveat (perfect-sequencer upper bound) into a
+"here is the sequencer-free design and its evidence" section, and turns C2
+from "we found a scaling problem" into "we found it and fixed it two ways."
+The only remaining perfect-sequencer dependency is the *quantitative* lane
+sweeps (the lane prototype is correctness-tested, not yet swept for
+liveness) — a strengthening, not a blocker.
+
 The net: the scaled sweeps are the only *running* dependency, and even they
 only feed one figure overlay. The binding constraint on submission is
 writing RQ2 + the baseline matrix + prose — not more simulator time. That is

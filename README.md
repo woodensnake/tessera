@@ -43,8 +43,14 @@ loud, attributable failures.
   detected** (a finding that corrected PROTOCOL §8), equivocation forked
   and attributed, and the key thief reading until its first capture gap.
 - **`sweep.py`** — parameter sweeps (EXPERIMENTS M3): `python sweep.py all`
-  runs RQ1 (detection), RQ3a (loss), and RQ3b (churn cliff) at 200
-  seeds/config across all cores, writing `results/*.json` and markdown.
+  runs RQ1 (detection), RQ3a (loss), RQ3b (churn cliff), RQ3c (resync fix),
+  and RQ3d (window-in-time fix) at 200 seeds/config across all cores,
+  writing `results/*.json` and markdown.
+- **`lanes.py`** — per-sender-lane prototype (PROTOCOL §11.1): one chain
+  per sender, no global sequencer. `test_lanes.py` proves members converge
+  under any per-sender-FIFO delivery order — the evidence that the
+  perfect-sequencer idealization can be removed — plus per-lane fork
+  detection and braid-based continuity.
 - **`cost.py`** — RQ2 cost accounting: primitive op-counts per message /
   heartbeat / epoch change and real wire bytes, vs a signed-no-chain
   baseline. `python cost.py` prints the table; JSON in `results/`.

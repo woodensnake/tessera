@@ -13,6 +13,7 @@ import hashlib
 import hmac as hmac_mod
 import os
 import struct
+from collections import deque
 from dataclasses import dataclass
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
@@ -293,7 +294,8 @@ class Member:
                  kem_key: X25519PrivateKey,
                  roster: dict[bytes, MemberKeys], epoch_secret: bytes,
                  window: int = DEFAULT_WINDOW, epoch: int = 0,
-                 fp_close: bytes = b"\x00" * FP_LEN):
+                 fp_close: bytes = b"\x00" * FP_LEN,
+                 window_secs: float | None = None, clock=None):
         self.id = member_id
         self.signing_key = signing_key
         self.kem_key = kem_key
@@ -301,8 +303,18 @@ class Member:
         self.epoch = epoch
         self.seq = 0  # next expected position
         self.ck = chain_init(epoch_secret, epoch, roster_hash(roster), fp_close)
+        # Retransmit window: keep a wire if it is within EITHER the count
+        # bound (window) OR the time bound (window_secs). Aggregate throughput
+        # grows with N, so a message-count window is a 1/N-shrinking *time*
+        # buffer; the time floor keeps a fixed real-time span regardless of N
+        # (PROTOCOL §11.8a). Retention is a purely local policy — the clock
+        # need not be synchronized across members.
         self.window = window
-        self.seen: dict[int, Wire] = {}   # last `window` accepted wires
+        self.window_secs = window_secs
+        self._clock = clock  # callable -> float; None = count-based only
+        self.seen: dict[int, Wire] = {}
+        self._seen_stamp: dict[int, float] = {}
+        self._seen_order: deque[int] = deque()
         self.buffer: dict[int, Wire] = {}  # future messages awaiting a gap fill
         self.hb_counter = 0                # our own heartbeat counter
         self.hb_seen: dict[bytes, int] = {}  # highest counter seen per sender
@@ -381,10 +393,31 @@ class Member:
 
         salt, plaintext = payload[:SALT_LEN], payload[SALT_LEN:]
         self.ck = self._advance(self.ck, salt, plaintext, wire.header_bytes())
-        self.seen[wire.seq] = wire
-        self.seen.pop(wire.seq - self.window, None)
+        self._retain(wire)
         self.seq += 1
         return Delivered(wire.seq, wire.sender, plaintext)
+
+    def _retain(self, wire: Wire) -> None:
+        """Store a wire in the retransmit window and evict any that fall
+        outside BOTH the count and time bounds. Seqs and stamps are monotonic,
+        so the oldest is always at the front of the deque — O(1) amortized."""
+        now = self._clock() if self._clock else None
+        self.seen[wire.seq] = wire
+        self._seen_order.append(wire.seq)
+        if now is not None:
+            self._seen_stamp[wire.seq] = now
+        cutoff = self.seq + 1 - self.window  # newest seq is self.seq here
+        while self._seen_order:
+            old = self._seen_order[0]
+            count_out = old < cutoff
+            time_out = (now is None or self.window_secs is None
+                        or self._seen_stamp.get(old, now) < now - self.window_secs)
+            if count_out and time_out:      # outside both -> evict
+                self._seen_order.popleft()
+                self.seen.pop(old, None)
+                self._seen_stamp.pop(old, None)
+            else:
+                break
 
     # --- heartbeats (§6) ---
 
@@ -530,6 +563,8 @@ class Member:
         self.ck = chain_init(secret, self.epoch, roster_hash(new_roster),
                              ec.fp_close)
         self.seen.clear()
+        self._seen_stamp.clear()
+        self._seen_order.clear()
         self.buffer.clear()
         # Heartbeat counters are per-epoch: a rejoining member restarts at 0,
         # so peers must forget the old counters or reject its heartbeats as
@@ -577,6 +612,8 @@ class Member:
         self.seq = grant.seq
         self.ck = ck
         self.seen.clear()
+        self._seen_stamp.clear()
+        self._seen_order.clear()
         self.buffer.clear()
         self.hb_seen.clear()
         return Resynced(self.epoch, self.seq)
@@ -584,7 +621,8 @@ class Member:
     @classmethod
     def join(cls, member_id: bytes, signing_key: Ed25519PrivateKey,
              kem_key: X25519PrivateKey, ec: EpochChange,
-             window: int = DEFAULT_WINDOW) -> "Member":
+             window: int = DEFAULT_WINDOW,
+             window_secs: float | None = None, clock=None) -> "Member":
         """Joiner side. Note the trust asymmetry the spec doesn't state:
         a joiner has no history, so it CANNOT verify fp_close or the
         coordinator's roster — it trusts the bundle it was handed. Its
@@ -601,7 +639,11 @@ class Member:
         m.ck = chain_init(secret, ec.new_epoch, roster_hash(m.roster),
                           ec.fp_close)
         m.window = window
+        m.window_secs = window_secs
+        m._clock = clock
         m.seen = {}
+        m._seen_stamp = {}
+        m._seen_order = deque()
         m.buffer = {}
         m.hb_counter = 0
         m.hb_seen = {}

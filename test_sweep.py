@@ -1,7 +1,7 @@
 """Fast smoke tests for the sweep harness — structure and determinism, not
 the full 200-seed runs (those live in `python sweep.py`)."""
 
-from sweep import rq1, rq3, rq3_churn, rq3_fix, bootstrap_ci
+from sweep import rq1, rq3, rq3_churn, rq3_fix, rq3_window, bootstrap_ci
 
 
 def test_bootstrap_ci_is_deterministic_and_ordered():
@@ -51,3 +51,11 @@ def test_rq3_fix_resync_eliminates_the_storm():
     assert rows["resync"]["mean_rejoins"] == 0.0    # resync: no rejoins at all
     assert rows["resync"]["mean_epoch_changes"] == 0.0
     assert rows["resync"]["ended_behind_rate"] == 0.0  # fully reconverged
+
+
+def test_rq3_window_time_floor_moves_the_cliff():
+    # window-in-time: a real-time retention floor keeps recovery in Rung 1 at
+    # an outage that badly crosses the count-only window (N=60 for CI speed)
+    rows = {r["variant"]: r for r in rq3_window(seeds=4, n=60)}
+    assert rows["count-only"]["mean_rejoins"] > 10        # count window crossed
+    assert rows["count+30s-floor"]["mean_rejoins"] == 0.0  # time floor holds

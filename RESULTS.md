@@ -226,6 +226,49 @@ attribution degrades. Both sharpen C3: transcript binding's detection
 guarantees are real but **weaken as the swarm grows**, and the paper must
 say so.
 
+### RQ3d — The other fix: window-in-time moves the cliff outward
+
+Resync makes *crossing* the cliff survivable; window-in-time makes *crossing*
+it rare. The cliff exists because a fixed *message-count* window is a
+1/N-shrinking *time* buffer (at N=100, 20 msg/s, a 64-message window is only
+~3 s). A retention floor of T real seconds holds regardless of N, and — since
+retransmit retention is a purely *local* policy — needs no clock sync. A/B at
+N=100 with a 25 s outage that badly crosses the count window (legacy rejoin,
+so the effect shows as rejoins):
+
+| variant | mean rejoins | any-rejoin | ended behind |
+|---|---|---|---|
+| count-only (64 msg ≈ 3 s buffer) | 98.2 | 1.00 | 1.00 |
+| count + 30 s time-floor           | **0.0** | **0.00** | **0.00** |
+
+The 30 s floor keeps every laggard inside Rung-1 range for the whole 25 s
+outage — no rejoins at all. The two fixes are **independent and
+complementary**: window-in-time (stay in Rung 1) and resync (survive Rung
+1.5 without cascade) defend the swarm on two separate axes, and the spec now
+mandates both (§11.8a/b, both DONE).
+
+## Sequencer-free operation (per-sender lanes, §11.1)
+
+Every liveness and detection number above is an **upper bound** because the
+simulator supplies a *perfect global sequencer* — the evaluation's biggest
+validity gap (EXPERIMENTS §8). `lanes.py` prototypes the way out: one chain
+per sender. A member advances its own lane on send and lane[X] on receiving
+X's message; only a sender writes its own lane, and messages from different
+senders share no slot, so there is nothing to globally order.
+
+The load-bearing test (`test_any_delivery_order_converges`): four members
+each send into their own lane, and each member is fed the others' messages in
+a **different random order** (respecting only per-sender FIFO — a legal
+no-global-sequencer delivery). All four converge to **byte-identical lane
+state and one shared braid**. That is direct evidence the perfect sequencer
+can be removed. The prototype also shows concurrent senders never contend (no
+slot race), per-lane fork/clone detection with attribution, and braid
+divergence when a lane forks. **Still open:** the *asynchronous* braid
+checkpoint (agreeing which position vector to braid over while lanes move) and
+porting resync/epochs to lanes. On this evidence, per-sender lanes look like
+the real architecture, with the single chain as the strong-ordering special
+case.
+
 ## RQ2 — Cost (what continuity charges)
 
 Operation counts (empirically instrumented for KDF/hash; one-per-op by

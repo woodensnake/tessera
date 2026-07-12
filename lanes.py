@@ -1,0 +1,212 @@
+"""Per-sender lanes (PROTOCOL §11.1) — removing the perfect sequencer.
+
+The single-chain design (tessera.py) needs a total order on messages, which
+the whole M1-M3 evaluation supplied via a perfect global sequencer — its
+biggest validity gap (EXPERIMENTS §8). This module prototypes the way out.
+
+Idea: give each sender its OWN chain (a "lane"). A member's message advances
+only its own lane; every member tracks one chain per sender. Because only a
+sender writes its own lane, ordering within a lane is trivial (the sender is
+the sole author) and messages from *different* senders never share a slot —
+so there is nothing to globally order. Concurrent sends commit without
+coordination; the slot-confirmation latency of the single chain (§11.7)
+disappears.
+
+Continuity is recovered by BRAID: a hash over every lane's fingerprint at a
+position vector. Two members with identical lane state produce the same
+braid; any lane divergence surfaces at the next braid. The single chain's
+"one gap locks you out" becomes "one gap in *some* lane locks you out of
+*that* lane," detected at braid time.
+
+Scope of this prototype: the sequencer-free convergence property (the point)
+and per-lane detection + quiescent braids. The fully asynchronous braid
+checkpoint — agreeing *which* position vector to braid over while lanes keep
+moving — is the remaining open problem (see test docstrings and §11.1).
+"""
+
+from __future__ import annotations
+
+import os
+import struct
+from collections import deque
+from dataclasses import dataclass
+
+from cryptography.exceptions import InvalidSignature, InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+
+from tessera import (
+    FP_LEN, NONCE, SALT_LEN, H, MemberKeys, kdf, roster_hash,
+)
+
+L_INIT = b"tessera-lane-init"
+L_MSG = b"tessera-lane-msg"
+L_FP = b"tessera-lane-fp"
+L_ADV = b"tessera-lane-adv"
+L_BRAID = b"tessera-lane-braid"
+
+
+@dataclass(frozen=True)
+class LaneWire:
+    sender: bytes
+    lane_seq: int
+    fp: bytes
+    body: bytes
+    sig: bytes
+
+    def header(self) -> bytes:
+        return (b"lw" + struct.pack("!B", len(self.sender)) + self.sender
+                + struct.pack("!Q", self.lane_seq) + self.fp)
+
+    def signed(self) -> bytes:
+        return self.header() + H(self.body)
+
+
+# dispatch events (mirror the single-chain ones, but per lane)
+@dataclass(frozen=True)
+class Delivered:
+    sender: bytes
+    lane_seq: int
+    plaintext: bytes
+
+@dataclass(frozen=True)
+class Gap:
+    sender: bytes
+    expected: int
+    got: int
+
+@dataclass(frozen=True)
+class LaneFork:
+    sender: bytes
+    lane_seq: int
+
+@dataclass(frozen=True)
+class Duplicate:
+    sender: bytes
+    lane_seq: int
+
+@dataclass(frozen=True)
+class CloneEvidence:
+    sender: bytes
+    lane_seq: int
+    first: LaneWire
+    second: LaneWire
+
+@dataclass(frozen=True)
+class BadSignature:
+    sender: bytes
+
+
+class LaneMember:
+    """One chain per sender. No global sequencer: a member advances its own
+    lane on send, and lane[X] on receiving X's message. Members converge to
+    identical per-lane state under ANY delivery order that respects per-sender
+    FIFO — which is the whole point (test_any_delivery_order_converges)."""
+
+    def __init__(self, member_id, signing_key, kem_key, roster, epoch_secret):
+        self.id = member_id
+        self.signing_key = signing_key
+        self.kem_key = kem_key
+        self.roster = roster
+        r_hash = roster_hash(roster)
+        # every member derives the same initial key for every lane
+        self.lanes = {mid: kdf(epoch_secret, L_INIT, mid + r_hash)
+                      for mid in roster}
+        self.lane_seq = {mid: 0 for mid in roster}
+        self.seen = {mid: {} for mid in roster}   # lane -> {seq: wire}
+        self.buffer = {mid: {} for mid in roster}  # lane -> {seq: wire}
+
+    # --- key schedule, per lane ---
+
+    @staticmethod
+    def _mk(ck, sender, seq):
+        return kdf(ck, L_MSG, sender + struct.pack("!Q", seq))
+
+    @staticmethod
+    def _fp(ck, sender, seq):
+        return kdf(ck, L_FP, sender + struct.pack("!Q", seq))[:FP_LEN]
+
+    @staticmethod
+    def _advance(ck, salt, plaintext, header):
+        return kdf(ck, L_ADV, H(salt + plaintext) + H(header))
+
+    # --- send: advances only our OWN lane ---
+
+    def send(self, plaintext: bytes) -> LaneWire:
+        seq = self.lane_seq[self.id]
+        ck = self.lanes[self.id]
+        salt = os.urandom(SALT_LEN)
+        fp = self._fp(ck, self.id, seq)
+        wire = LaneWire(self.id, seq, fp, b"", b"")
+        header = wire.header()
+        mk = self._mk(ck, self.id, seq)
+        body = ChaCha20Poly1305(mk).encrypt(NONCE, salt + plaintext, header)
+        sig = self.signing_key.sign(header + H(body))
+        # advance own lane; receivers do the same when they process this wire
+        self.lanes[self.id] = self._advance(ck, salt, plaintext, header)
+        self.lane_seq[self.id] += 1
+        w = LaneWire(self.id, seq, fp, body, sig)
+        self.seen[self.id][seq] = w
+        return w
+
+    # --- receive: advances lane[sender] ---
+
+    def receive(self, wire: LaneWire) -> list:
+        events = [self._dispatch(wire)]
+        s = wire.sender
+        while (isinstance(events[-1], Delivered)
+               and self.lane_seq[s] in self.buffer[s]):
+            events.append(self._dispatch(self.buffer[s].pop(self.lane_seq[s])))
+        return events
+
+    def _dispatch(self, wire: LaneWire):
+        s = wire.sender
+        keys = self.roster.get(s)
+        if keys is None:
+            return BadSignature(s)
+        try:
+            keys.sig_pk.verify(wire.sig, wire.signed())
+        except InvalidSignature:
+            return BadSignature(s)
+        if s == self.id:
+            return Duplicate(s, wire.lane_seq)  # our own echo; already advanced
+
+        exp = self.lane_seq[s]
+        if wire.lane_seq > exp:
+            self.buffer[s][wire.lane_seq] = wire
+            return Gap(s, exp, wire.lane_seq)
+        if wire.lane_seq < exp:
+            prior = self.seen[s].get(wire.lane_seq)
+            if prior is not None and H(prior.body) != H(wire.body):
+                return CloneEvidence(s, wire.lane_seq, prior, wire)
+            return Duplicate(s, wire.lane_seq)
+
+        ck = self.lanes[s]
+        if wire.fp != self._fp(ck, s, wire.lane_seq):
+            return LaneFork(s, wire.lane_seq)
+        mk = self._mk(ck, s, wire.lane_seq)
+        try:
+            payload = ChaCha20Poly1305(mk).decrypt(NONCE, wire.body, wire.header())
+        except InvalidTag:
+            return LaneFork(s, wire.lane_seq)
+        salt, pt = payload[:SALT_LEN], payload[SALT_LEN:]
+        self.lanes[s] = self._advance(ck, salt, pt, wire.header())
+        self.seen[s][wire.lane_seq] = wire
+        self.lane_seq[s] += 1
+        return Delivered(s, wire.lane_seq, pt)
+
+    # --- BRAID: swarm-wide consistency checkpoint over all lanes ---
+
+    def braid(self) -> bytes:
+        """Hash over (sender, lane_seq, lane fingerprint) for every lane, in
+        canonical order. Two members with identical lane state -> identical
+        braid; any lane divergence changes it. Meaningful to *compare* only at
+        a shared position vector (e.g. quiescence); the asynchronous-checkpoint
+        version is the §11.1 open problem."""
+        parts = b"".join(
+            mid + struct.pack("!Q", self.lane_seq[mid])
+            + self._fp(self.lanes[mid], mid, self.lane_seq[mid])
+            for mid in sorted(self.roster))
+        return H(L_BRAID + parts)
+
+    def position_vector(self) -> tuple:
+        return tuple((mid, self.lane_seq[mid]) for mid in sorted(self.roster))
