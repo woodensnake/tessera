@@ -1,7 +1,8 @@
 """Fast smoke tests for the sweep harness — structure and determinism, not
 the full 200-seed runs (those live in `python sweep.py`)."""
 
-from sweep import rq1, rq3, rq3_churn, rq3_fix, rq3_window, bootstrap_ci
+from sweep import (rq1, rq3, rq3_churn, rq3_fix, rq3_window, rq5_lanes,
+                   bootstrap_ci)
 
 
 def test_bootstrap_ci_is_deterministic_and_ordered():
@@ -59,3 +60,13 @@ def test_rq3_window_time_floor_moves_the_cliff():
     rows = {r["variant"]: r for r in rq3_window(seeds=4, n=60)}
     assert rows["count-only"]["mean_rejoins"] > 10        # count window crossed
     assert rows["count+30s-floor"]["mean_rejoins"] == 0.0  # time floor holds
+
+
+def test_rq5_lanes_converge_without_a_sequencer():
+    # the sequencer-free swarm converges under loss, with no forks — matching
+    # the single chain's robustness but with no global order
+    rows = {(r["model"], r["loss"]): r for r in rq5_lanes(seeds=4)}
+    assert rows[("iid", 0.0)]["converged_rate"] == 1.0
+    assert rows[("iid", 0.10)]["converged_rate"] == 1.0
+    assert all(r["total_lane_forks"] == 0 for r in rows.values())
+    assert all(r["total_braid_divergences"] == 0 for r in rows.values())

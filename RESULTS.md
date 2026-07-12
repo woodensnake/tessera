@@ -256,16 +256,39 @@ per sender. A member advances its own lane on send and lane[X] on receiving
 X's message; only a sender writes its own lane, and messages from different
 senders share no slot, so there is nothing to globally order.
 
-The load-bearing test (`test_any_delivery_order_converges`): four members
-each send into their own lane, and each member is fed the others' messages in
-a **different random order** (respecting only per-sender FIFO — a legal
+The correctness test (`test_any_delivery_order_converges`): four members each
+send into their own lane, and each member is fed the others' messages in a
+**different random order** (respecting only per-sender FIFO — a legal
 no-global-sequencer delivery). All four converge to **byte-identical lane
-state and one shared braid**. That is direct evidence the perfect sequencer
-can be removed. The prototype also shows concurrent senders never contend (no
-slot race), per-lane fork/clone detection with attribution, and braid
-divergence when a lane forks. **Still open:** the *asynchronous* braid
-checkpoint (agreeing which position vector to braid over while lanes move) and
-porting resync/epochs to lanes. On this evidence, per-sender lanes look like
+state and one shared braid**. Concurrent senders never contend (no slot
+race), and per-lane forks are detected and attributed.
+
+**The asynchronous braid checkpoint (§11.1's open piece) — now solved.** A
+member signs a *braid claim*: its view of every lane's fingerprint at its
+current position. Because a lane's fingerprint at position v equals the
+`wire.fp` at v, a peer at a *different* position can still verify the claim —
+recomputing lanes it sits at, consulting bounded retained history for lanes
+it is past — and **localize any divergence to the exact lane and seq**, with
+no shared clock or checkpoint vector. Divergence-detection latency is the
+braid interval.
+
+**RQ5 — sequencer-free liveness (the headline).** `lane_sim.py` runs the
+lanes over the same lossy network with **no sequencer**: agents broadcast
+into their own lanes, recover per lane, and use braid claims to drive
+lost-tail catch-up (the lane analogue of heartbeat recovery — the same lesson
+the single chain taught, re-derived). Does it converge? 100 seeds, N=8:
+
+| loss | converged (i.i.d.) | converged (burst) | forks | braid div |
+|---|---|---|---|---|
+| 0% → 20% | **1.000** | **1.000** | 0 | 0 |
+
+**100% convergence at every loss level to 20%, i.i.d. and burst, zero forks,
+zero divergences — matching the single chain's RQ3a robustness with no global
+order.** This is the direct evidence that the perfect-sequencer idealization
+the entire M1–M3 evaluation rested on was *not load-bearing for liveness*.
+Cost scales as expected (mean NACKs rise from ~5 lossless to ~1000 at 20%
+loss). **Still open:** porting resync/epochs/membership to lanes, and a
+quantitative lane *detection* sweep. On this evidence, per-sender lanes are
 the real architecture, with the single chain as the strong-ordering special
 case.
 

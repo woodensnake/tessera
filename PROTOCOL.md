@@ -1,13 +1,15 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.8 — nothing here is final; every section marked
+**Status:** design sketch, v0.9 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
 v0.8 closes both storm fixes and prototypes the sequencer-free architecture:
 §11.8a **window-in-time** (`window_secs`) is DONE — a real-time retention
-floor moves the cliff outward (N=100, D=25 s: 98 rejoins → 0); and §11.1
-**per-sender lanes** (`lanes.py`) is prototyped — members converge under any
-per-sender-FIFO delivery order, so the perfect-sequencer idealization the
-whole M1–M3 evaluation rested on can be removed.
+floor moves the cliff outward (N=100, D=25 s: 98 rejoins → 0).
+v0.9 substantially closes §11.1 **per-sender lanes**: the asynchronous braid
+checkpoint is solved (a signed, position-independent lane-fingerprint claim
+that localizes divergence), and `lane_sim.py` measures sequencer-free
+liveness — 100% convergence under loss to 20% (i.i.d. and burst), matching
+the single chain, so the perfect-sequencer idealization was not load-bearing.
 v0.5 corrects §8 with a finding from the M2 adversary harness: a *silent*
 clone (stale or synced) is not detectable by fingerprint — "behind" is not
 "forked", so a stale clone's heartbeat is indistinguishable from a
@@ -450,16 +452,23 @@ equivocates (OPEN: can we fingerprint the ordering service too?).
    within a lane is trivial and messages from different senders share no
    slot — so there is nothing to globally order, and the §11.7
    slot-confirmation latency vanishes. Continuity is recovered by a **braid**:
-   a hash over every lane's fingerprint at a position vector; identical lane
-   state → identical braid, so any lane divergence surfaces at the next
-   braid. The prototype demonstrates the load-bearing claim — members fed the
-   same messages in *different* per-sender-FIFO orders converge to
-   byte-identical lane state and one braid (no sequencer needed) — plus
-   per-lane fork/clone detection and quiescent-braid consistency. **Still
-   open:** the *asynchronous* braid checkpoint — agreeing which position
-   vector to braid over while lanes keep moving — and recovery/resync ported
-   to lanes. Given this, per-sender lanes look like the real architecture,
-   with the single chain as the small-swarm / strong-ordering special case.
+   a signed *braid claim* carries a member's view of every lane's fingerprint
+   at its current position. Because a lane's fingerprint at position v equals
+   the `wire.fp` at v, a peer at a *different* position can verify the claim —
+   recomputing lanes it sits at, consulting bounded retained fingerprint
+   history for lanes it is past — and localize divergence to the exact lane
+   and seq, with no shared clock or checkpoint vector. (This is the
+   asynchronous checkpoint the earlier draft left open — now solved.) Braid
+   claims also drive lost-tail recovery: a claim showing a peer ahead in some
+   lane triggers a per-lane retransmit (the lane analogue of the §6
+   heartbeat). **Measured (`lane_sim.py`, RESULTS.md RQ5):** with NO
+   sequencer, the swarm converges to one braid under loss to 20% (i.i.d. and
+   burst), 100% of trials, zero forks — matching the single chain's RQ3a, so
+   the perfect-sequencer idealization was not load-bearing for liveness.
+   **Still open:** resync/epochs/membership ported to lanes, and a
+   quantitative lane *detection* sweep. On this evidence, per-sender lanes are
+   the real architecture, with the single chain as the strong-ordering
+   special case.
 2. **Partition-merge policy** (§7 Rung 3) — including how a side *proves*
    it holds the quorum (roster signatures, not self-reported counts), and
    amnesty for members evicted as unreachable who were alive across the

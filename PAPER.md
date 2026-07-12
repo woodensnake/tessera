@@ -74,11 +74,14 @@ including the honest negatives, which bound the claim.
    attack becomes under binding; the honest negatives as first-class.
    ⟨HAVE⟩.
 5. **Evaluation.**
-   - Method: discrete-event sim on the real protocol code; perfect-sequencer
-     idealization stated as an upper bound *in the abstract*. ⟨HAVE⟩.
+   - Method: discrete-event sim on the real protocol code. Single-chain runs
+     use a perfect sequencer; the lane runs (RQ5) use none — so the sequencer
+     is a *modeled option*, not a blanket assumption. ⟨HAVE⟩.
    - RQ1 detection (Fig 2, Fig 3). ⟨HAVE⟩.
-   - RQ3 liveness (Fig 4, Fig 5) — the headline. ⟨HAVE⟩ N=15; ⟨NEED⟩ N-scale.
-   - RQ2 cost (Table 2). ⟨NEED⟩.
+   - RQ3 liveness (Fig 4, Fig 5) + RQ3c/d fixes — the headline. ⟨HAVE⟩ to N=100.
+   - RQ5 sequencer-free liveness (Fig 6) — lanes converge under loss to 20%
+     with no global order. ⟨HAVE⟩.
+   - RQ2 cost (Table 2). ⟨HAVE⟩.
 6. **Discussion / limitations.** Perfect-sequencer bound; one traffic shape;
    prototype crypto; the byzantine-sequencer and lane-based-ordering
    directions as future work. ⟨HAVE⟩ mostly (EXPERIMENTS §8, §11).
@@ -126,17 +129,20 @@ Writing this collapsed the remaining work to a short, ordered list:
    the byzantine-sequencer study; the formal definitions + Tamarin model
    (these gate the *later* security-venue paper, not this one).
 
-**Update — both storm fixes done, and the sequencer idealization addressed.**
+**Update — both storm fixes done, and the sequencer idealization retired.**
 Since this outline was written: (a) resync (§7 Rung 1.5) and window-in-time
 (§11.8a) both implemented and A/B'd — the N=100 storm goes to 0 rejoins by
-*either* mechanism, and they are complementary; (b) per-sender lanes
-(`lanes.py`) prototyped, proving convergence with no global sequencer. This
-converts the paper's central caveat (perfect-sequencer upper bound) into a
-"here is the sequencer-free design and its evidence" section, and turns C2
-from "we found a scaling problem" into "we found it and fixed it two ways."
-The only remaining perfect-sequencer dependency is the *quantitative* lane
-sweeps (the lane prototype is correctness-tested, not yet swept for
-liveness) — a strengthening, not a blocker.
+*either* mechanism, and they are complementary; (b) per-sender lanes fully
+prototyped (`lanes.py` + `lane_sim.py`): the asynchronous braid checkpoint is
+solved, and a *sequencer-free* liveness sweep (RQ5) shows 100% convergence
+under loss to 20%, i.i.d. and burst, matching the single chain's RQ3a. This
+**retires the paper's central caveat**: the perfect-sequencer upper bound is
+no longer "we assumed this away" but "we removed it and measured the same
+result." The Method/Limitations sections change accordingly — the sequencer
+becomes one *option* (strong ordering) beside lanes (gossip), not a load-
+bearing assumption. C2 becomes find-it-and-fix-it-two-ways; the biggest
+validity threat becomes a contribution. Remaining lane work (resync/epochs on
+lanes, a lane *detection* sweep) is strengthening, not a blocker.
 
 The net: the scaled sweeps are the only *running* dependency, and even they
 only feed one figure overlay. The binding constraint on submission is

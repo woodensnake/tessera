@@ -1,0 +1,90 @@
+[
+  {
+    "model": "burst",
+    "loss": 0.01,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 34.18
+  },
+  {
+    "model": "burst",
+    "loss": 0.02,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 66.1
+  },
+  {
+    "model": "burst",
+    "loss": 0.05,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 167.65
+  },
+  {
+    "model": "burst",
+    "loss": 0.1,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 374.01
+  },
+  {
+    "model": "burst",
+    "loss": 0.2,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 978.61
+  },
+  {
+    "model": "iid",
+    "loss": 0.0,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 5.26
+  },
+  {
+    "model": "iid",
+    "loss": 0.01,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 36.22
+  },
+  {
+    "model": "iid",
+    "loss": 0.02,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 71.31
+  },
+  {
+    "model": "iid",
+    "loss": 0.05,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 179.47
+  },
+  {
+    "model": "iid",
+    "loss": 0.1,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 403.73
+  },
+  {
+    "model": "iid",
+    "loss": 0.2,
+    "converged_rate": 1.0,
+    "total_lane_forks": 0,
+    "total_braid_divergences": 0,
+    "mean_nacks": 1051.84
+  }
+]

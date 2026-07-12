@@ -8,7 +8,8 @@ import random
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from lanes import (CloneEvidence, Delivered, Gap, LaneFork, LaneMember)
+from lanes import (BraidDivergence, BraidOK, CloneEvidence, Delivered, Gap,
+                   LaneFork, LaneMember)
 from tessera import MemberKeys
 
 
@@ -118,6 +119,61 @@ def test_braid_detects_lane_divergence():
     assert good1.position_vector() == good2.position_vector() == bad.position_vector()
     assert good1.braid() == good2.braid()      # same content -> same braid
     assert good1.braid() != bad.braid()        # the fork shows in the braid
+
+
+def test_async_braid_verifies_across_different_positions():
+    """The §11.1 checkpoint: a member can verify a peer's braid claim even
+    though the two are at DIFFERENT positions — recomputing lanes it is at and
+    consulting retained history for lanes it is past. This is what removes the
+    need for a synchronized checkpoint vector."""
+    rng = random.Random(7)
+    swarm = make_lane_swarm(4)
+    wires = {m.id: [m.send(f"{m.id!r}#{i}".encode()) for i in range(6)]
+             for m in swarm}
+    # deliver everything to member 0 (fully caught up)
+    for w in random_fifo_schedule({s: ws for s, ws in wires.items()
+                                   if s != swarm[0].id}, rng):
+        swarm[0].receive(w)
+    # member 1 is only PARTLY caught up (each other lane advanced a bit)
+    for s, ws in wires.items():
+        if s == swarm[1].id:
+            continue
+        for w in ws[:3]:            # only first 3 of each lane
+            swarm[1].receive(w)
+
+    claim0 = swarm[0].make_braid_claim()   # from the fully-caught-up member
+    res = swarm[1].verify_braid_claim(claim0)
+    assert isinstance(res, BraidOK)        # no divergence — they agree
+    assert res.partial is True             # member 1 was behind on some lanes
+
+
+def test_async_braid_localizes_a_forked_lane():
+    """A divergence in one lane is pinpointed to that exact lane and seq, and
+    attributed to the claimant, regardless of the other lanes. Note the fork
+    surfaces at the seq AFTER the diverging message: position 0's fingerprint
+    depends only on the (shared) initial lane key, so the chains part at 1."""
+    import copy
+    swarm = make_lane_swarm(4)
+    honest, on_real, on_fork, checker = swarm
+    forker = copy.deepcopy(honest)         # same identity + lane state
+
+    w_real = honest.send(b"real")          # honest's lane, seq 0
+    w_fork = forker.send(b"forged")        # same seq 0, different body
+
+    on_real.receive(w_real)                # advances honest-lane on real
+    on_fork.receive(w_fork)                # advances honest-lane on forged
+    checker.receive(w_real)                # checker is on the real chain
+
+    # on_fork now diverges from checker in honest's lane, starting at seq 1
+    claim = on_fork.make_braid_claim()
+    res = checker.verify_braid_claim(claim)
+    assert isinstance(res, BraidDivergence)
+    assert res.lane == honest.id           # localized to honest's lane
+    assert res.seq == 1                    # the fork surfaces one past the split
+
+    # and the member on the SAME (real) chain verifies clean
+    assert isinstance(checker.verify_braid_claim(on_real.make_braid_claim()),
+                      BraidOK)
 
 
 def test_gap_then_catch_up_within_a_lane():

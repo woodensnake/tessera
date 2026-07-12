@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 
 from sim import run_trial
 from adversaries import run_adversary_trial
+from lane_sim import run_lane_trial
 
 RESULTS = os.path.join(os.path.dirname(__file__), "results")
 SEEDS = int(os.environ.get("TESSERA_SEEDS", "200"))
@@ -70,6 +71,8 @@ def _one(args):
     kw["seed"] = seed
     if kind == "honest":
         return run_trial(**kw)
+    if kind == "lane":
+        return run_lane_trial(**kw)
     return run_adversary_trial(**kw)
 
 
@@ -260,6 +263,44 @@ def report_rq3_fix(rows):
     return "\n".join(lines)
 
 
+def rq5_lanes(seeds=SEEDS):
+    """Sequencer-free liveness (§11.1). The single-chain RQ3a absorbed loss to
+    20% — but only with a perfect sequencer, so its numbers are upper bounds.
+    This sweeps the lane sim, which has NO sequencer, and asks: does the swarm
+    still converge (all honest members reach one braid)? If it matches RQ3a,
+    the sequencer idealization was not load-bearing for liveness."""
+    losses = [0.0, 0.01, 0.02, 0.05, 0.10, 0.20]
+    base = dict(n=8, duration=300, rate=0.2)
+    cells = [Cell(f"iid/{p}", "lane", tuple({**base, "loss": p}.items()))
+             for p in losses]
+    cells += [Cell(f"burst/{p}", "lane",
+                   tuple({**base, "loss": p, "burst_len": 10}.items()))
+              for p in losses if p > 0]
+    raw = run_cells(cells, seeds)
+    rows = []
+    for label, trials in raw.items():
+        model, p = label.split("/")
+        conv, _ = rate_ci([t["converged"] for t in trials])
+        rows.append(dict(
+            model=model, loss=float(p), converged_rate=conv,
+            total_lane_forks=sum(t["lane_forks"] for t in trials),
+            total_braid_divergences=sum(t["braid_divergences"] for t in trials),
+            mean_nacks=statistics.mean(t["nacks"] for t in trials)))
+    return sorted(rows, key=lambda r: (r["model"], r["loss"]))
+
+
+def report_rq5(rows):
+    lines = ["## RQ5 — Sequencer-free liveness (per-sender lanes)", "",
+             "| model | loss | converged | lane forks | braid div | mean NACKs |",
+             "|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(
+            f"| {r['model']} | {r['loss']:.2f} | {r['converged_rate']:.3f} "
+            f"| {r['total_lane_forks']} | {r['total_braid_divergences']} "
+            f"| {r['mean_nacks']:.1f} |")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- RQ1
 
 def rq1(seeds=SEEDS, n=5):
@@ -394,6 +435,11 @@ def main():
         rows = rq1()
         json.dump(rows, open(os.path.join(RESULTS, "rq1.json"), "w"), indent=2)
         print(report_rq1(rows), "\n")
+    if which in ("rq5", "lanes", "all"):
+        rows = rq5_lanes()
+        json.dump(rows, open(os.path.join(RESULTS, "rq5_lanes.json"), "w"),
+                  indent=2)
+        print(report_rq5(rows), "\n")
 
 
 if __name__ == "__main__":

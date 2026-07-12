@@ -95,6 +95,39 @@ class CloneEvidence:
 class BadSignature:
     sender: bytes
 
+@dataclass(frozen=True)
+class BraidClaim:
+    """§11.1 asynchronous checkpoint: a signed statement of one member's view
+    of every lane's fingerprint at its current position vector. A peer at a
+    different position can still verify it — for each lane it recomputes (if it
+    is AT that position) or looks up its retained history (if it is PAST it) —
+    and localize any divergence to the exact lane and seq. This is what makes
+    divergence detection latency ≈ the braid interval, with no shared clock or
+    global order."""
+    claimant: bytes
+    entries: tuple           # ((lane_owner, seq, fp), ...) sorted by lane_owner
+    sig: bytes
+
+    def signed(self) -> bytes:
+        body = b"".join(mid + struct.pack("!Q", seq) + fp
+                        for mid, seq, fp in self.entries)
+        return b"tessera-braid-claim" + self.claimant + body
+
+@dataclass(frozen=True)
+class BraidOK:
+    """Every lane we could check agreed. `partial` is True if some lanes were
+    ahead of us and left unchecked (we'll catch them at a later braid)."""
+    claimant: bytes
+    partial: bool
+
+@dataclass(frozen=True)
+class BraidDivergence:
+    """A lane's fingerprint in the claim disagrees with our history: the
+    claimant is on a different chain in that lane. Localized, attributable."""
+    claimant: bytes
+    lane: bytes
+    seq: int
+
 
 class LaneMember:
     """One chain per sender. No global sequencer: a member advances its own
@@ -114,6 +147,13 @@ class LaneMember:
         self.lane_seq = {mid: 0 for mid in roster}
         self.seen = {mid: {} for mid in roster}   # lane -> {seq: wire}
         self.buffer = {mid: {} for mid in roster}  # lane -> {seq: wire}
+        # bounded per-lane fingerprint history, so we can verify a braid claim
+        # from a peer that is at a DIFFERENT position than us. fp_hist[s][v] is
+        # the fingerprint of lane s at position v — which equals the wire.fp of
+        # the wire at seq v, and equals what a member sitting AT position v
+        # would compute for its current position.
+        self.fp_hist = {mid: {} for mid in roster}
+        self.fp_keep = 256                        # entries retained per lane
 
     # --- key schedule, per lane ---
 
@@ -146,7 +186,14 @@ class LaneMember:
         self.lane_seq[self.id] += 1
         w = LaneWire(self.id, seq, fp, body, sig)
         self.seen[self.id][seq] = w
+        self._record_fp(self.id, seq, fp)
         return w
+
+    def _record_fp(self, sender: bytes, seq: int, fp: bytes) -> None:
+        h = self.fp_hist[sender]
+        h[seq] = fp
+        if len(h) > self.fp_keep:
+            del h[min(h)]
 
     # --- receive: advances lane[sender] ---
 
@@ -191,6 +238,7 @@ class LaneMember:
         salt, pt = payload[:SALT_LEN], payload[SALT_LEN:]
         self.lanes[s] = self._advance(ck, salt, pt, wire.header())
         self.seen[s][wire.lane_seq] = wire
+        self._record_fp(s, wire.lane_seq, wire.fp)
         self.lane_seq[s] += 1
         return Delivered(s, wire.lane_seq, pt)
 
@@ -210,3 +258,47 @@ class LaneMember:
 
     def position_vector(self) -> tuple:
         return tuple((mid, self.lane_seq[mid]) for mid in sorted(self.roster))
+
+    # --- asynchronous braid checkpoint (§11.1) ---
+
+    def make_braid_claim(self) -> BraidClaim:
+        """Sign our current view: for each lane, its fingerprint at our current
+        position. Cheap (N entries) and emitted on the braid timer."""
+        entries = tuple(
+            (mid, self.lane_seq[mid],
+             self._fp(self.lanes[mid], mid, self.lane_seq[mid]))
+            for mid in sorted(self.roster))
+        claim = BraidClaim(self.id, entries, b"")
+        return BraidClaim(self.id, entries,
+                          self.signing_key.sign(claim.signed()))
+
+    def verify_braid_claim(self, claim: BraidClaim):
+        keys = self.roster.get(claim.claimant)
+        if keys is None:
+            return BadSignature(claim.claimant)
+        try:
+            keys.sig_pk.verify(claim.sig, claim.signed())
+        except InvalidSignature:
+            return BadSignature(claim.claimant)
+
+        partial = False
+        for lane, seq, fp in claim.entries:
+            if lane not in self.roster:
+                return BraidDivergence(claim.claimant, lane, seq)  # roster split
+            mine = self._fp_at(lane, seq)
+            if mine is None:
+                partial = True          # we are behind (or it aged out) here
+                continue
+            if mine != fp:
+                return BraidDivergence(claim.claimant, lane, seq)
+        return BraidOK(claim.claimant, partial)
+
+    def _fp_at(self, lane: bytes, seq: int) -> bytes | None:
+        """Our fingerprint for `lane` at position `seq`: recomputed if we are
+        sitting there now, from retained history if we are past it, else None
+        (we are behind, or it aged out of history)."""
+        if seq == self.lane_seq[lane]:
+            return self._fp(self.lanes[lane], lane, seq)
+        if seq < self.lane_seq[lane]:
+            return self.fp_hist[lane].get(seq)
+        return None
