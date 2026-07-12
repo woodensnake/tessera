@@ -22,11 +22,12 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from sim import DRAIN, GilbertElliott, IIDLoss, Network, Poisson, Sim
 from lanes import (BraidDivergence, BraidOK, CloneEvidence, Delivered, Gap,
-                   LaneFork, LaneMember)
+                   LaneFork, LaneMember, LaneResynced)
 from tessera import MemberKeys
 
 NACK_TIMEOUT = 0.5
 BRAID_INTERVAL = 5.0
+RESYNC_LAG = 32        # if this far behind on a lane, resync instead of NACK
 
 
 @dataclass
@@ -39,6 +40,8 @@ class LaneMetrics:
     lane_forks: int = 0            # must be 0 in an honest run
     braid_claims: int = 0
     braid_divergences: int = 0     # must be 0 in an honest run
+    resyncs: int = 0               # returning members brought current, no re-key
+    rekeys: int = 0                # global re-keys — should stay 0 (no storm)
     converged: bool = False        # all honest members share one braid at end
     distinct_braids_at_end: int = 0
     network_dropped: int = 0
@@ -55,6 +58,7 @@ class LaneAgent:
         self.sk, self.kk = sk, kk
         self.online = True
         self.nack_armed = False
+        self.resyncing = False
 
     def send(self):
         if not self.online:
@@ -133,7 +137,14 @@ class LaneAgent:
             return
         # A braid claim also reveals lanes where the claimant is AHEAD of us —
         # the lost-tail case that no in-lane successor would expose (the lane
-        # analogue of heartbeat-driven recovery, §6). Ask a peer for the gap.
+        # analogue of heartbeat-driven recovery, §6). If we are only slightly
+        # behind, NACK the gap; if we are FAR behind on any lane (returned from
+        # an outage), resync the whole head in one shot — no re-key, no storm.
+        far = any(seq - self.member.lane_seq[lane] > RESYNC_LAG
+                  for lane, seq, _fp in claim.entries)
+        if far and not self.resyncing:
+            self._request_resync()
+            return
         for lane, seq, _fp in claim.entries:
             if seq > self.member.lane_seq[lane]:
                 self._request_lane(lane, self.member.lane_seq[lane], seq)
@@ -144,6 +155,37 @@ class LaneAgent:
             self.swarm.metrics.nacks += 1
             self.swarm.network.unicast(self.id, peer.id, peer.serve,
                                        self, lane, (start, end))
+
+    # --- lane resync (§7 Rung 1.5): storm-free return of a far-behind member ---
+
+    def _request_resync(self):
+        if not (self.online and not self.resyncing):
+            return
+        self.resyncing = True
+        peer = self.swarm.pick_peer(self)
+        if peer is not None:
+            self.swarm.network.unicast(self.id, peer.id, peer.serve_resync, self)
+        self.swarm.sim.after(NACK_TIMEOUT, self._resync_retry)
+
+    def _resync_retry(self):
+        if self.resyncing and self.online:      # grant lost; ask again
+            self.resyncing = False
+            self._request_resync()
+
+    def serve_resync(self, requester):
+        if not self.online:
+            return
+        grant = self.member.make_lane_resync(requester.id)
+        if grant is not None:
+            self.swarm.network.unicast(self.id, requester.id,
+                                       requester.on_resync_grant, grant)
+
+    def on_resync_grant(self, grant):
+        if not (self.online and self.resyncing):
+            return
+        if isinstance(self.member.apply_lane_resync(grant), LaneResynced):
+            self.resyncing = False
+            self.swarm.metrics.resyncs += 1
 
 
 class LaneSwarm:
@@ -175,7 +217,8 @@ class LaneSwarm:
                            lambda a=agent: loop(a))
 
     def pick_peer(self, requester):
-        pool = [a for a in self.agents if a is not requester and a.online]
+        pool = [a for a in self.agents
+                if a is not requester and a.online and not a.resyncing]
         return self.sim.rng.choice(pool) if pool else None
 
     def finalize(self):
@@ -189,7 +232,7 @@ class LaneSwarm:
 
 
 def run_lane_trial(n=5, duration=400, seed=0, rate=0.2, loss=0.0,
-                   burst_len=None):
+                   burst_len=None, offline_windows=None):
     sim = Sim(seed)
     loss_model = (GilbertElliott.from_mean(loss, burst_len)
                   if burst_len else IIDLoss(loss))
@@ -197,6 +240,10 @@ def run_lane_trial(n=5, duration=400, seed=0, rate=0.2, loss=0.0,
     swarm = LaneSwarm(sim, network, n)
     swarm.start_traffic(rate, stop=duration - DRAIN)
     swarm.start_braids(stop=duration - 5.0)
+    for mid, (start, end) in (offline_windows or {}).items():
+        agent = next(a for a in swarm.agents if a.id == mid)
+        sim.after(start, lambda a=agent: setattr(a, "online", False))
+        sim.after(end, lambda a=agent: setattr(a, "online", True))
     sim.run(duration)
     return swarm.finalize().to_dict()
 

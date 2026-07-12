@@ -54,9 +54,10 @@ loud, attributable failures.
   peer at a *different* position can verify and use to localize divergence).
 - **`lane_sim.py`** — sequencer-free liveness sim: agents broadcast into
   their own lanes over the lossy network with no global order, recovering
-  per lane and using braids to drive lost-tail catch-up. `test_lane_sim.py`
-  shows the swarm converges to one braid under loss up to 20% — matching the
-  single chain's robustness *without* a sequencer.
+  per lane, using braids to drive lost-tail catch-up, and **resyncing**
+  far-behind returning members. `test_lane_sim.py` shows the swarm converges
+  to one braid under loss up to 20% *without* a sequencer, and survives
+  correlated churn with **zero global re-keys** — the storm cannot form.
 - **`cost.py`** — RQ2 cost accounting: primitive op-counts per message /
   heartbeat / epoch change and real wire bytes, vs a signed-no-chain
   baseline. `python cost.py` prints the table; JSON in `results/`.

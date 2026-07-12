@@ -287,10 +287,27 @@ zero divergences — matching the single chain's RQ3a robustness with no global
 order.** This is the direct evidence that the perfect-sequencer idealization
 the entire M1–M3 evaluation rested on was *not load-bearing for liveness*.
 Cost scales as expected (mean NACKs rise from ~5 lossless to ~1000 at 20%
-loss). **Still open:** porting resync/epochs/membership to lanes, and a
-quantitative lane *detection* sweep. On this evidence, per-sender lanes are
-the real architecture, with the single chain as the strong-ordering special
-case.
+loss).
+
+**Resync ported to lanes — the storm cannot form here at all.** A returning
+roster member gets every lane's current head (key + position) sealed to its
+identity by any peer, with one subtlety the prototype caught: it must **not**
+adopt a peer's view of its *own* lane (it is the sole author and sent nothing
+while away, so its own state is authoritative — overwriting it rewinds its
+send position and forks its own lane; an honest churn run flushed hundreds of
+false forks until this was fixed). With that, the correlated-churn scenario
+that stormed the single chain (N=20, 40% offline, deep enough to exceed the
+resync threshold) recovers on lanes with **resyncs firing, zero global
+re-keys, zero forks, full reconvergence** across all seeds. The single
+chain's storm came from rejoin = global epoch change; lanes have **no global
+re-key in the recovery path at all** (`rekeys` is identically 0), so the
+cascade is structurally impossible — a stronger guarantee than the
+single-chain resync fix, which merely avoids the re-key by policy.
+
+**Still open on lanes:** quorum eviction and heal (which *do* re-key, as they
+must — the evictee knew the lane keys) and a quantitative lane *detection*
+sweep. On this evidence, per-sender lanes are the real architecture, with the
+single chain as the strong-ordering special case.
 
 ## RQ2 — Cost (what continuity charges)
 

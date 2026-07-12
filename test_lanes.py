@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from lanes import (BraidDivergence, BraidOK, CloneEvidence, Delivered, Gap,
-                   LaneFork, LaneMember)
+                   LaneFork, LaneMember, LaneNeedsFullJoin, LaneResynced)
 from tessera import MemberKeys
 
 
@@ -174,6 +174,41 @@ def test_async_braid_localizes_a_forked_lane():
     # and the member on the SAME (real) chain verifies clean
     assert isinstance(checker.verify_braid_claim(on_real.make_braid_claim()),
                       BraidOK)
+
+
+def test_lane_resync_returns_a_laggard_to_current_head():
+    """§7 Rung 1.5 on lanes: a returning member adopts every lane's current
+    head via a peer's sealed grant — no re-key, no epoch — and is instantly
+    back in lockstep (identical braid)."""
+    swarm = make_lane_swarm(3)
+    for i in range(4):
+        for m in swarm:
+            w = m.send(f"{m.id!r}#{i}".encode())
+            for r in swarm:
+                if r is not m:
+                    r.receive(w)
+    laggard = swarm[2]
+    # fell far behind on OTHERS' lanes (never on its own — it is the author)
+    for k in laggard.lanes:
+        if k != laggard.id:
+            laggard.lanes[k] = b"\x00" * 32
+            laggard.lane_seq[k] = 0
+
+    grant = swarm[0].make_lane_resync(laggard.id)
+    assert isinstance(laggard.apply_lane_resync(grant), LaneResynced)
+    # every OTHER lane now matches the peer; the own lane was untouched
+    for k in laggard.lanes:
+        if k != laggard.id:
+            assert laggard.lanes[k] == swarm[0].lanes[k]
+    assert laggard.braid() == swarm[0].braid()
+    # and it can immediately participate: its next message is accepted
+    w = laggard.send(b"back")
+    assert isinstance(swarm[0].receive(w)[0], Delivered)
+
+
+def test_lane_resync_refuses_a_stranger():
+    swarm = make_lane_swarm(3)
+    assert swarm[0].make_lane_resync(b"not-a-member") is None
 
 
 def test_gap_then_catch_up_within_a_lane():

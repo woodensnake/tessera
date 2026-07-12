@@ -35,7 +35,8 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 from tessera import (
-    FP_LEN, NONCE, SALT_LEN, H, MemberKeys, kdf, roster_hash,
+    FP_LEN, NONCE, SALT_LEN, H, MemberKeys, kdf, open_sealed, roster_hash,
+    seal,
 )
 
 L_INIT = b"tessera-lane-init"
@@ -43,6 +44,7 @@ L_MSG = b"tessera-lane-msg"
 L_FP = b"tessera-lane-fp"
 L_ADV = b"tessera-lane-adv"
 L_BRAID = b"tessera-lane-braid"
+L_RESYNC = b"tessera-lane-resync"
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,35 @@ class BraidDivergence:
     claimant: bytes
     lane: bytes
     seq: int
+
+@dataclass(frozen=True)
+class LaneResyncGrant:
+    """§7 Rung 1.5 on lanes: a lockstep peer seals its *current* state for
+    every lane (key + position) to a returning roster member. As in the single
+    chain, this mints no epoch and re-keys no one, so a wave of returns costs N
+    independent resyncs, not a cascade — the storm cannot form. Even more
+    natural on lanes: the returner just adopts each lane's current head."""
+    returner: bytes
+    roster_hash: bytes
+    eph: bytes
+    ct: bytes
+    grantor: bytes
+    sig: bytes
+
+    def signed(self) -> bytes:
+        return (L_RESYNC + self.returner + self.roster_hash + self.eph
+                + self.ct + self.grantor)
+
+    def context(self) -> bytes:
+        return L_RESYNC + b"ctx" + self.returner + self.roster_hash
+
+@dataclass(frozen=True)
+class LaneResynced:
+    returner: bytes
+
+@dataclass(frozen=True)
+class LaneNeedsFullJoin:
+    reason: str
 
 
 class LaneMember:
@@ -302,3 +333,53 @@ class LaneMember:
         if seq < self.lane_seq[lane]:
             return self.fp_hist[lane].get(seq)
         return None
+
+    # --- lane resync (§7 Rung 1.5, storm-free recovery) ---
+
+    def make_lane_resync(self, returner_id: bytes) -> LaneResyncGrant | None:
+        """Seal our current head (key + position) for every lane to a returning
+        roster member. None if the returner is not a member (must full-join)."""
+        keys = self.roster.get(returner_id)
+        if keys is None:
+            return None
+        r_hash = roster_hash(self.roster)
+        payload = b"".join(
+            struct.pack("!B", len(lane)) + lane + self.lanes[lane]
+            + struct.pack("!Q", self.lane_seq[lane])
+            for lane in sorted(self.lanes))
+        stub = LaneResyncGrant(returner_id, r_hash, b"", b"", self.id, b"")
+        eph, ct = seal(keys.kem_pk, payload, stub.context())
+        grant = LaneResyncGrant(returner_id, r_hash, eph, ct, self.id, b"")
+        return LaneResyncGrant(returner_id, r_hash, eph, ct, self.id,
+                               self.signing_key.sign(grant.signed()))
+
+    def apply_lane_resync(self, grant: LaneResyncGrant):
+        if grant.returner != self.id:
+            return None
+        gk = self.roster.get(grant.grantor)
+        if gk is None:
+            return BadSignature(grant.grantor)
+        try:
+            gk.sig_pk.verify(grant.sig, grant.signed())
+        except InvalidSignature:
+            return BadSignature(grant.grantor)
+        if grant.roster_hash != roster_hash(self.roster):
+            return LaneNeedsFullJoin("roster changed during outage")
+        payload = open_sealed(self.kem_key, grant.eph, grant.ct, grant.context())
+        i = 0
+        while i < len(payload):
+            ln = payload[i]; i += 1
+            lane = payload[i:i + ln]; i += ln
+            ck = payload[i:i + 32]; i += 32
+            seq = struct.unpack("!Q", payload[i:i + 8])[0]; i += 8
+            # NEVER adopt a peer's view of our OWN lane: we are its sole author,
+            # we sent nothing while away, so our own state is authoritative and
+            # the peer's copy may even be stale. Overwriting it would rewind our
+            # send position and fork our own lane.
+            if lane == self.id:
+                continue
+            self.lanes[lane] = ck
+            self.lane_seq[lane] = seq
+            self.buffer[lane].clear()
+            self.fp_hist[lane].clear()
+        return LaneResynced(self.id)

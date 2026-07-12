@@ -465,7 +465,14 @@ equivocates (OPEN: can we fingerprint the ordering service too?).
    sequencer, the swarm converges to one braid under loss to 20% (i.i.d. and
    burst), 100% of trials, zero forks — matching the single chain's RQ3a, so
    the perfect-sequencer idealization was not load-bearing for liveness.
-   **Still open:** resync/epochs/membership ported to lanes, and a
+   **Resync is ported (`make_lane_resync`):** a returning member gets every
+   lane's current head sealed to its identity — never adopting a peer's view
+   of its *own* lane, which it authors. Under correlated churn that stormed
+   the single chain, lanes recover with resyncs and **zero global re-keys**
+   (`rekeys` ≡ 0): lanes have no re-key in the recovery path, so the cascade
+   is structurally impossible — stronger than the single-chain fix, which
+   avoids the re-key only by policy. **Still open:** quorum eviction and heal
+   on lanes (these must re-key, as the evictee knew the keys), and a
    quantitative lane *detection* sweep. On this evidence, per-sender lanes are
    the real architecture, with the single chain as the strong-ordering
    special case.
