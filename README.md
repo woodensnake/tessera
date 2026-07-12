@@ -26,6 +26,14 @@ loud, attributable failures.
 - **[EXPERIMENTS.md](EXPERIMENTS.md)** — the experiment design: research
   questions, falsifiable hypotheses, adversary taxonomy, metrics, and
   kill criteria for the planned evaluation.
+- **[FORMAL.md](FORMAL.md)** — the formal track: game-based definitions of
+  the novel properties (continuity, gap-lockout, fork attribution) with
+  proof sketches, plus an honest ledger of what is proven vs. owed.
+- **`model.py`** — an *executable* symbolic (Dolev-Yao) model: a knowledge-
+  closure checker that mechanically verifies authenticity, gap-lockout, and
+  salt-necessity, with negative controls proving it can detect insecurity.
+  `test_model.py` runs it on every CI. (Not a computational proof; not
+  Tamarin — the honest substitute available without those tools.)
 - **`sim.py`** — discrete-event simulator (EXPERIMENTS M1): honest swarm
   on the real protocol code over lossy (i.i.d. / Gilbert–Elliott),
   delaying, partitioning networks, with the §7 recovery ladder driven by

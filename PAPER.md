@@ -124,10 +124,18 @@ Writing this collapsed the remaining work to a short, ordered list:
    — no further loss sweeps needed.
 4. **Deniability section.** Prose, not experiment. *Do it; a reviewer will
    raise it regardless.*
-5. **Explicitly deferred (do NOT block the workshop paper on these):** the
-   real-trace run (nice-to-have sensitivity check, not a claim dependency);
-   the byzantine-sequencer study; the formal definitions + Tamarin model
-   (these gate the *later* security-venue paper, not this one).
+5. **Formal track — STARTED (was deferred).** Game-based definitions of the
+   three novel properties (continuity, gap-lockout, fork attribution) are
+   written with proof sketches (FORMAL.md §2), and an *executable* symbolic
+   (Dolev-Yao) model (`model.py`) mechanically checks authenticity /
+   gap-lockout / salt-necessity with negative controls, on every CI. This
+   gives the workshop paper a real Security section. Still owed for the
+   security-venue paper: full computational proofs (EasyCrypt), a
+   Tamarin/ProVerif model covering interaction + the epoch cutover, and
+   epoch/quorum/lane definitions.
+6. **Still deferred (do NOT block the workshop paper):** the real-trace run
+   (sensitivity check, not a claim dependency) and the byzantine-sequencer
+   study.
 
 **Update — both storm fixes done, and the sequencer idealization retired.**
 Since this outline was written: (a) resync (§7 Rung 1.5) and window-in-time
