@@ -9,8 +9,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from lanes import (BraidDivergence, BraidOK, CloneEvidence, Delivered, Gap,
-                   LaneFork, LaneMember, LaneNeedsFullJoin, LaneResynced)
+                   LaneContinuityBreak, LaneEpochChanged, LaneEpochMismatch,
+                   LaneEvicted, LaneFork, LaneMember, LaneNeedsFullJoin,
+                   LaneQuorumRejected, LaneResynced)
 from tessera import MemberKeys
+
+
+def advance_all(swarm, rounds=3):
+    for i in range(rounds):
+        for m in swarm:
+            w = m.send(f"{m.id!r}#{i}".encode())
+            for r in swarm:
+                if r is not m:
+                    r.receive(w)
 
 
 def make_lane_swarm(n=4):
@@ -209,6 +220,119 @@ def test_lane_resync_returns_a_laggard_to_current_head():
 def test_lane_resync_refuses_a_stranger():
     swarm = make_lane_swarm(3)
     assert swarm[0].make_lane_resync(b"not-a-member") is None
+
+
+def test_lane_evict_rekeys_and_locks_out_the_evictee():
+    swarm = make_lane_swarm(4)
+    advance_all(swarm)
+    evictee = swarm[3]
+    sigs = tuple(m.sign_lane_proposal("EVICT", evictee.id) for m in swarm[:3])
+    ec = swarm[0].make_lane_epoch("EVICT", evictee.id, proposal_sigs=sigs)
+
+    remaining = swarm[:3]
+    for m in remaining:
+        assert m.apply_lane_epoch(ec) == LaneEpochChanged(1, "EVICT")
+    assert evictee.apply_lane_epoch(ec) == LaneEvicted(1)
+    assert len({m.braid() for m in remaining}) == 1      # remaining converge
+    assert evictee.id not in remaining[0].roster         # roster shrank
+
+    # post-evict traffic flows among remaining; the evictee is on a dead epoch
+    w = remaining[0].send(b"post-evict")
+    assert all(isinstance(m.receive(w)[0], Delivered) for m in remaining[1:])
+    assert evictee.receive(w) == [LaneEpochMismatch(0, 1)]  # cannot follow
+
+
+def test_lane_evict_needs_quorum():
+    swarm = make_lane_swarm(4)               # quorum = 3
+    advance_all(swarm)
+    target = swarm[3]
+    lone = (swarm[0].sign_lane_proposal("EVICT", target.id),)
+    ec = swarm[0].make_lane_epoch("EVICT", target.id, proposal_sigs=lone)
+    for m in swarm[:3]:
+        assert m.apply_lane_epoch(ec) == LaneQuorumRejected(1, have=1, need=3)
+
+
+def test_lane_heal_rekeys_everyone():
+    swarm = make_lane_swarm(3)
+    advance_all(swarm)
+    ec = swarm[1].make_lane_epoch("HEAL")
+    for m in swarm:
+        assert m.apply_lane_epoch(ec) == LaneEpochChanged(1, "HEAL")
+    assert len({m.braid() for m in swarm}) == 1
+    # everyone advanced to a fresh epoch and can still communicate
+    w = swarm[0].send(b"after heal")
+    assert all(isinstance(m.receive(w)[0], Delivered) for m in swarm[1:])
+
+
+def test_bootstrap_from_sealed_genesis():
+    """Bootstrap: a coordinator seals the genesis secret to each member's
+    identity key; every member builds independently and converges. Turns
+    trusted identity keys into a shared group secret."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    keys = {f"a{i}".encode(): (Ed25519PrivateKey.generate(),
+                               X25519PrivateKey.generate()) for i in range(4)}
+    roster = {mid: MemberKeys(sk.public_key(), kk.public_key())
+              for mid, (sk, kk) in keys.items()}
+    bundle, _ = LaneMember.make_genesis(b"a0", keys[b"a0"][0], roster)
+    swarm = [LaneMember.from_genesis(mid, sk, kk, bundle)
+             for mid, (sk, kk) in keys.items()]
+    assert len({tuple(sorted(m.lanes.items())) for m in swarm}) == 1
+    w = swarm[0].send(b"from genesis")
+    assert all(isinstance(m.receive(w)[0], Delivered) for m in swarm[1:])
+
+
+def test_partition_merge_quorum_side_is_canonical():
+    """Rung 3 made concrete: during a partition, only the majority can mint an
+    epoch (quorum-gated), so its quorum signatures ARE the proof of the
+    legitimate line. The minority cannot fork the epoch; on merge, the evicted
+    absent member finds itself out and must rejoin, while the quorum side's
+    epoch is authoritative."""
+    swarm = make_lane_swarm(5)
+    advance_all(swarm)
+    majority = swarm[:3]                      # a0,a1,a2 — a majority of 5
+    minority = swarm[3:]                      # a3,a4 — partitioned away
+
+    # minority cannot evict anyone: it lacks a quorum (2 < 3)
+    m_sigs = tuple(m.sign_lane_proposal("EVICT", swarm[0].id) for m in minority)
+    m_ec = minority[0].make_lane_epoch("EVICT", swarm[0].id, proposal_sigs=m_sigs)
+    assert minority[1].apply_lane_epoch(m_ec) == LaneQuorumRejected(1, 2, 3)
+
+    # the majority evicts an unreachable minority member (quorum of 3 of 5)
+    maj_sigs = tuple(m.sign_lane_proposal("EVICT", swarm[4].id) for m in majority)
+    ec = majority[0].make_lane_epoch("EVICT", swarm[4].id, proposal_sigs=maj_sigs)
+    for m in majority:
+        assert m.apply_lane_epoch(ec) == LaneEpochChanged(1, "EVICT")
+
+    # on merge, the evicted member verifies the quorum-signed bundle and learns
+    # it is out — it must rejoin fresh (its old epoch-0 state is a dead fork)
+    assert swarm[4].apply_lane_epoch(ec) == LaneEvicted(1)
+    # and a still-present minority member accepts the quorum side as canonical
+    # (it catches up, then applies) — the quorum proof is the majority sigs it
+    # verifies against its own roster
+    res = swarm[3].apply_lane_epoch(ec)
+    assert res in (LaneEpochChanged(1, "EVICT"),)  # a3 was current, applies
+
+
+def test_lane_epoch_continuity_break_on_forked_history():
+    """A member whose braid at the cutover vector disagrees rejects the
+    re-key instead of silently joining the majority's new epoch."""
+    import copy
+    swarm = make_lane_swarm(3)
+    advance_all(swarm, rounds=2)
+    a, b, c = swarm
+    clone = copy.deepcopy(a)                 # same identity + lane state as a
+
+    w_real = a.send(b"the real message")     # a's lane, advances a and b
+    w_fork = clone.send(b"a forgery")        # same position, different body
+    b.receive(w_real)
+    c.receive(w_fork)                        # c is now forked in a's lane
+
+    # a and b share the real history at the same position vector as c, but a
+    # different braid — a heals over the real history
+    ec = a.make_lane_epoch("HEAL")
+    assert b.apply_lane_epoch(ec) == LaneEpochChanged(1, "HEAL")
+    assert c.apply_lane_epoch(ec) == LaneContinuityBreak(1)
 
 
 def test_gap_then_catch_up_within_a_lane():

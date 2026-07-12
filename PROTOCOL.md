@@ -1,7 +1,14 @@
 # Tessera: Transcript-Bound Continuity for Agent Swarms
 
-**Status:** design sketch, v0.9 — nothing here is final; every section marked
+**Status:** design sketch, v0.10 — nothing here is final; every section marked
 OPEN is a known unsolved decision.
+v0.10 completes the lane architecture's core ("Level 1"): eviction/heal
+(`make_lane_epoch`, quorum-gated, braid-bound continuity, epoch-tagged
+wires), a concrete bootstrap (`make_genesis`, sealed genesis secret), and a
+concrete partition-merge mechanism (the quorum side's signatures prove the
+legitimate line). Lanes are now at feature parity with the single chain.
+Remaining before the security-venue paper is the *formal track* — game-based
+definitions and a machine-checked model — plus a lane detection sweep.
 v0.8 closes both storm fixes and prototypes the sequencer-free architecture:
 §11.8a **window-in-time** (`window_secs`) is DONE — a real-time retention
 floor moves the cliff outward (N=100, D=25 s: 98 rejoins → 0).
@@ -302,9 +309,18 @@ secrecy and lockout are the same mechanism; you cannot have a backdoor for
 friends that isn't a backdoor. Rung 2 remains the path for a genuinely new
 member, and the fallback when the roster has changed under a returner.
 
-**Rung 3 — partition merge.** Two halves that both kept talking have
-forked chains that can never be merged (transcript binding forbids
-CRDT-style reconciliation, deliberately). Resolution is political, not
+**Rung 3 — partition merge.** *Mechanism now concrete (lanes):* during a
+partition only a side holding a roster **majority** can mint an epoch
+(quorum-gated, §9), so that side's quorum signatures are a verifiable proof
+of the legitimate line — a minority member checks them against its own
+roster and accepts the majority epoch as canonical, rejoining (resync if it
+only lagged, full re-bootstrap if it was evicted). The minority provably
+*cannot* mint a competing epoch (`LaneQuorumRejected`). What remains a policy
+question, not a cryptographic one: **amnesty** for a member evicted as
+"unreachable" that was in fact alive across the partition. Two halves that
+both kept talking still have forked chains that can never be merged
+(transcript binding forbids CRDT-style reconciliation, deliberately).
+Resolution of *which side wins* is political, not
 cryptographic: pick a surviving side by policy (larger half, senior
 member, coordination-layer leader), and the other side rejoins via Rung 2.
 OPEN: policy language for this; whether the losing side's transcript
@@ -471,11 +487,22 @@ equivocates (OPEN: can we fingerprint the ordering service too?).
    the single chain, lanes recover with resyncs and **zero global re-keys**
    (`rekeys` ≡ 0): lanes have no re-key in the recovery path, so the cascade
    is structurally impossible — stronger than the single-chain fix, which
-   avoids the re-key only by policy. **Still open:** quorum eviction and heal
-   on lanes (these must re-key, as the evictee knew the keys), and a
-   quantitative lane *detection* sweep. On this evidence, per-sender lanes are
-   the real architecture, with the single chain as the strong-ordering
-   special case.
+   avoids the re-key only by policy. **Eviction and heal are also ported**
+   (`make_lane_epoch`): quorum-signed EVICT and periodic HEAL re-key every
+   lane from a fresh sealed secret, cutting over at a position vector whose
+   *braid* binds the new epoch to the shared past (continuity — a forked
+   member gets `LaneContinuityBreak` and cannot silently join). Lane wires
+   carry an epoch number so a not-yet-updated member cleanly sees
+   `LaneEpochMismatch` rather than misreading new-epoch traffic. **Bootstrap
+   is concrete** (`make_genesis`/`from_genesis`): a coordinator seals the
+   genesis secret to each member's identity KEM key, signed — turning trusted
+   identity keys (out-of-band PKI) into a shared group secret. **Still open:**
+   a quantitative lane *detection* sweep, and amnesty policy for members
+   evicted as unreachable during a partition (the merge *mechanism* is
+   concrete — the quorum side's signatures are the proof of the legitimate
+   line, §7 Rung 3 — but the fairness policy is not). On this evidence,
+   per-sender lanes are the real architecture; the single chain is the
+   strong-ordering special case.
 2. **Partition-merge policy** (§7 Rung 3) — including how a side *proves*
    it holds the quorum (roster signatures, not self-reported counts), and
    amnesty for members evicted as unreachable who were alive across the

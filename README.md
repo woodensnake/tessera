@@ -46,12 +46,13 @@ loud, attributable failures.
   runs RQ1 (detection), RQ3a (loss), RQ3b (churn cliff), RQ3c (resync fix),
   and RQ3d (window-in-time fix) at 200 seeds/config across all cores,
   writing `results/*.json` and markdown.
-- **`lanes.py`** — per-sender-lane prototype (PROTOCOL §11.1): one chain
-  per sender, no global sequencer. `test_lanes.py` proves members converge
-  under any per-sender-FIFO delivery order — the evidence that the
-  perfect-sequencer idealization can be removed — plus per-lane fork
-  detection and the asynchronous **braid** checkpoint (a signed view that a
-  peer at a *different* position can verify and use to localize divergence).
+- **`lanes.py`** — per-sender-lane prototype (PROTOCOL §11.1), now at
+  feature parity with the single chain: one chain per sender (no global
+  sequencer), per-lane fork detection, the asynchronous **braid** checkpoint
+  (a signed view a peer at a *different* position can verify to localize
+  divergence), lane **resync**, quorum **eviction/heal**, a concrete
+  **bootstrap** (sealed genesis secret), and a concrete partition-merge
+  mechanism. `test_lanes.py` covers all of it, including the honest negatives.
 - **`lane_sim.py`** — sequencer-free liveness sim: agents broadcast into
   their own lanes over the lossy network with no global order, recovering
   per lane, using braids to drive lost-tail catch-up, and **resyncing**

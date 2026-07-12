@@ -49,6 +49,7 @@ L_RESYNC = b"tessera-lane-resync"
 
 @dataclass(frozen=True)
 class LaneWire:
+    epoch: int
     sender: bytes
     lane_seq: int
     fp: bytes
@@ -56,8 +57,8 @@ class LaneWire:
     sig: bytes
 
     def header(self) -> bytes:
-        return (b"lw" + struct.pack("!B", len(self.sender)) + self.sender
-                + struct.pack("!Q", self.lane_seq) + self.fp)
+        return (b"lw" + struct.pack("!IB", self.epoch, len(self.sender))
+                + self.sender + struct.pack("!Q", self.lane_seq) + self.fp)
 
     def signed(self) -> bytes:
         return self.header() + H(self.body)
@@ -96,6 +97,11 @@ class CloneEvidence:
 @dataclass(frozen=True)
 class BadSignature:
     sender: bytes
+
+@dataclass(frozen=True)
+class LaneEpochMismatch:
+    ours: int
+    theirs: int
 
 @dataclass(frozen=True)
 class BraidClaim:
@@ -159,6 +165,73 @@ class LaneResynced:
 class LaneNeedsFullJoin:
     reason: str
 
+@dataclass(frozen=True)
+class LaneEpochChange:
+    """Re-key every lane (EVICT or HEAL). Cuts over at a position vector; the
+    braid over that vector binds the new epoch to the shared past (continuity),
+    and the fresh secret — sealed per remaining member — locks out an evictee,
+    who knew the old lane keys. Quorum-gated for EVICT (majority of the current
+    roster), so no single member can re-key the swarm around another."""
+    op: str                   # "EVICT" | "HEAL"
+    new_epoch: int
+    subject: bytes | None
+    roster: tuple             # ((mid, sig_pk_raw, kem_pk_raw), ...) sorted
+    close_vector: tuple       # ((lane, seq), ...) sorted — the cutover point
+    braid_close: bytes        # braid over close_vector (continuity binding)
+    sealed: tuple             # ((mid, eph, ct), ...) sorted — new secret per member
+    proposal_sigs: tuple      # ((mid, sig), ...) over the proposal (EVICT quorum)
+    coordinator: bytes
+    coord_sig: bytes
+
+    def proposal_bytes(self) -> bytes:
+        return (b"tessera-lane-prop" + self.op.encode() + b"\x00"
+                + struct.pack("!I", self.new_epoch) + (self.subject or b""))
+
+    def context(self) -> bytes:
+        r = b"".join(m + s + k for m, s, k in self.roster)
+        v = b"".join(lane + struct.pack("!Q", seq) for lane, seq in self.close_vector)
+        return self.proposal_bytes() + r + v + self.braid_close
+
+    def digest(self) -> bytes:
+        return H(self.context()
+                 + b"".join(m + e + c for m, e, c in self.sealed))
+
+    def roster_dict(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PublicKey)
+        from cryptography.hazmat.primitives.asymmetric.x25519 import (
+            X25519PublicKey)
+        return {m: MemberKeys(Ed25519PublicKey.from_public_bytes(s),
+                              X25519PublicKey.from_public_bytes(k))
+                for m, s, k in self.roster}
+
+@dataclass(frozen=True)
+class LaneEpochChanged:
+    epoch: int
+    op: str
+
+@dataclass(frozen=True)
+class LaneEvicted:
+    epoch: int
+
+@dataclass(frozen=True)
+class LaneContinuityBreak:
+    """Our braid at the cutover vector disagrees with the coordinator's: the
+    epoch is being cut over a history we don't share. We are forked."""
+    epoch: int
+
+@dataclass(frozen=True)
+class LaneNeedsCatchup:
+    """We haven't reached the cutover vector yet; catch up (NACK/resync) and
+    re-apply. Not an error — the async analogue of §9's pending-EC buffering."""
+    epoch: int
+
+@dataclass(frozen=True)
+class LaneQuorumRejected:
+    epoch: int
+    have: int
+    need: int
+
 
 class LaneMember:
     """One chain per sender. No global sequencer: a member advances its own
@@ -171,6 +244,7 @@ class LaneMember:
         self.signing_key = signing_key
         self.kem_key = kem_key
         self.roster = roster
+        self.epoch = 0
         r_hash = roster_hash(roster)
         # every member derives the same initial key for every lane
         self.lanes = {mid: kdf(epoch_secret, L_INIT, mid + r_hash)
@@ -185,6 +259,54 @@ class LaneMember:
         # would compute for its current position.
         self.fp_hist = {mid: {} for mid in roster}
         self.fp_keep = 256                        # entries retained per lane
+
+    # --- bootstrap: establish the genesis secret (the first shared key) ---
+
+    @staticmethod
+    def make_genesis(coordinator_id, coordinator_sk, roster):
+        """A designated coordinator samples the genesis secret and HPKE-seals
+        it to every member's identity KEM key, signing the bundle. This is the
+        concrete first-secret establishment the earlier draft assumed: it turns
+        trusted *identity* keys (established out of band — provisioning, CA,
+        DID) into a shared *group* secret. Returns (bundle, secret); the secret
+        is returned only so a caller can also build the coordinator's own
+        member — on the wire every member unseals its own copy."""
+        secret = os.urandom(32)
+        r_hash = roster_hash(roster)
+        ctx = b"tessera-lane-genesis" + r_hash
+        sealed = tuple((m, *seal(roster[m].kem_pk, secret, ctx))
+                       for m in sorted(roster))
+        roster_tuple = tuple(
+            (m, roster[m].sig_pk.public_bytes_raw(),
+             roster[m].kem_pk.public_bytes_raw()) for m in sorted(roster))
+        unsigned = H(ctx + b"".join(m + e + c for m, e, c in sealed)
+                     + b"".join(m + s + k for m, s, k in roster_tuple))
+        bundle = (coordinator_id, roster_tuple, sealed,
+                  coordinator_sk.sign(unsigned))
+        return bundle, secret
+
+    @classmethod
+    def from_genesis(cls, member_id, signing_key, kem_key, bundle):
+        """A member builds itself from a genesis bundle: verify the
+        coordinator's signature (its identity is trusted via the roster),
+        unseal our genesis secret, and initialise. Only a member the
+        coordinator sealed to can join — a stranger has no sealed entry."""
+        coord_id, roster_tuple, sealed, sig = bundle
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PublicKey)
+        from cryptography.hazmat.primitives.asymmetric.x25519 import (
+            X25519PublicKey)
+        roster = {m: MemberKeys(Ed25519PublicKey.from_public_bytes(s),
+                                X25519PublicKey.from_public_bytes(k))
+                  for m, s, k in roster_tuple}
+        r_hash = roster_hash(roster)
+        ctx = b"tessera-lane-genesis" + r_hash
+        unsigned = H(ctx + b"".join(m + e + c for m, e, c in sealed)
+                     + b"".join(m + s + k for m, s, k in roster_tuple))
+        roster[coord_id].sig_pk.verify(sig, unsigned)   # authenticate genesis
+        eph, ct = next((e, c) for m, e, c in sealed if m == member_id)
+        secret = open_sealed(kem_key, eph, ct, ctx)
+        return cls(member_id, signing_key, kem_key, roster, secret)
 
     # --- key schedule, per lane ---
 
@@ -207,7 +329,7 @@ class LaneMember:
         ck = self.lanes[self.id]
         salt = os.urandom(SALT_LEN)
         fp = self._fp(ck, self.id, seq)
-        wire = LaneWire(self.id, seq, fp, b"", b"")
+        wire = LaneWire(self.epoch, self.id, seq, fp, b"", b"")
         header = wire.header()
         mk = self._mk(ck, self.id, seq)
         body = ChaCha20Poly1305(mk).encrypt(NONCE, salt + plaintext, header)
@@ -215,7 +337,7 @@ class LaneMember:
         # advance own lane; receivers do the same when they process this wire
         self.lanes[self.id] = self._advance(ck, salt, plaintext, header)
         self.lane_seq[self.id] += 1
-        w = LaneWire(self.id, seq, fp, body, sig)
+        w = LaneWire(self.epoch, self.id, seq, fp, body, sig)
         self.seen[self.id][seq] = w
         self._record_fp(self.id, seq, fp)
         return w
@@ -245,6 +367,10 @@ class LaneMember:
             keys.sig_pk.verify(wire.sig, wire.signed())
         except InvalidSignature:
             return BadSignature(s)
+        if wire.epoch != self.epoch:
+            # older = stale noise; newer = we missed an epoch change (catch up
+            # / apply the pending one). Mirrors the single chain's §6 case.
+            return LaneEpochMismatch(self.epoch, wire.epoch)
         if s == self.id:
             return Duplicate(s, wire.lane_seq)  # our own echo; already advanced
 
@@ -276,16 +402,23 @@ class LaneMember:
     # --- BRAID: swarm-wide consistency checkpoint over all lanes ---
 
     def braid(self) -> bytes:
-        """Hash over (sender, lane_seq, lane fingerprint) for every lane, in
-        canonical order. Two members with identical lane state -> identical
-        braid; any lane divergence changes it. Meaningful to *compare* only at
-        a shared position vector (e.g. quiescence); the asynchronous-checkpoint
-        version is the §11.1 open problem."""
-        parts = b"".join(
-            mid + struct.pack("!Q", self.lane_seq[mid])
-            + self._fp(self.lanes[mid], mid, self.lane_seq[mid])
-            for mid in sorted(self.roster))
-        return H(L_BRAID + parts)
+        """Hash over (lane, seq, fingerprint) for every lane at our current
+        position. Two members with identical lane state -> identical braid."""
+        return self.braid_at(self.position_vector())
+
+    def braid_at(self, vector) -> bytes | None:
+        """Braid over a specified position vector, using recomputation for
+        lanes we sit at and retained history for lanes we are past. Returns
+        None if we cannot cover some position (behind, or aged out) — the
+        caller must catch up first. This is what lets an epoch cut over a
+        vector that members reached at different wall-clock times."""
+        parts = []
+        for lane, seq in vector:
+            fp = self._fp_at(lane, seq)
+            if fp is None:
+                return None
+            parts.append(lane + struct.pack("!Q", seq) + fp)
+        return H(L_BRAID + b"".join(parts))
 
     def position_vector(self) -> tuple:
         return tuple((mid, self.lane_seq[mid]) for mid in sorted(self.roster))
@@ -383,3 +516,97 @@ class LaneMember:
             self.buffer[lane].clear()
             self.fp_hist[lane].clear()
         return LaneResynced(self.id)
+
+    # --- lane epoch change: EVICT / HEAL (the re-key operations) ---
+
+    def sign_lane_proposal(self, op: str, subject: bytes | None):
+        stub = LaneEpochChange(op, self.epoch + 1, subject, (), (), b"", (), (),
+                               self.id, b"")
+        return (self.id, self.signing_key.sign(stub.proposal_bytes()))
+
+    def make_lane_epoch(self, op: str, subject: bytes | None = None,
+                        proposal_sigs: tuple = ()) -> LaneEpochChange:
+        new_epoch = self.epoch + 1
+        new_roster = dict(self.roster)
+        if op == "EVICT":
+            del new_roster[subject]
+        roster_tuple = tuple(
+            (m, new_roster[m].sig_pk.public_bytes_raw(),
+             new_roster[m].kem_pk.public_bytes_raw())
+            for m in sorted(new_roster))
+        close_vector = self.position_vector()
+        braid_close = self.braid()
+        secret = os.urandom(32)          # fresh: not derived from any old state
+        stub = LaneEpochChange(op, new_epoch, subject, roster_tuple,
+                               close_vector, braid_close, (), proposal_sigs,
+                               self.id, b"")
+        sealed = tuple(
+            (m, *seal(new_roster[m].kem_pk, secret, stub.context()))
+            for m in sorted(new_roster))
+        unsigned = LaneEpochChange(op, new_epoch, subject, roster_tuple,
+                                   close_vector, braid_close, sealed,
+                                   proposal_sigs, self.id, b"")
+        return LaneEpochChange(op, new_epoch, subject, roster_tuple,
+                               close_vector, braid_close, sealed, proposal_sigs,
+                               self.id, self.signing_key.sign(unsigned.digest()))
+
+    def apply_lane_epoch(self, ec: LaneEpochChange):
+        if ec.new_epoch != self.epoch + 1:
+            return LaneNeedsCatchup(ec.new_epoch) if ec.new_epoch > self.epoch \
+                else None
+        coord = self.roster.get(ec.coordinator)
+        if coord is None:
+            return BadSignature(ec.coordinator)
+        unsigned = LaneEpochChange(ec.op, ec.new_epoch, ec.subject, ec.roster,
+                                   ec.close_vector, ec.braid_close, ec.sealed,
+                                   ec.proposal_sigs, ec.coordinator, b"")
+        try:
+            coord.sig_pk.verify(ec.coord_sig, unsigned.digest())
+        except InvalidSignature:
+            return BadSignature(ec.coordinator)
+
+        if ec.op == "EVICT":
+            prop = LaneEpochChange(ec.op, ec.new_epoch, ec.subject, (), (), b"",
+                                   (), (), ec.coordinator, b"").proposal_bytes()
+            valid = set()
+            for mid, sig in ec.proposal_sigs:
+                k = self.roster.get(mid)
+                if k is None:
+                    continue
+                try:
+                    k.sig_pk.verify(sig, prop)
+                    valid.add(mid)
+                except InvalidSignature:
+                    pass
+            need = len(self.roster) // 2 + 1
+            if len(valid) < need:
+                return LaneQuorumRejected(ec.new_epoch, len(valid), need)
+
+        # continuity: our braid at the cutover vector must match the coordinator
+        mine = self.braid_at(ec.close_vector)
+        if mine is None:
+            return LaneNeedsCatchup(ec.new_epoch)   # not there yet; catch up
+        if mine != ec.braid_close:
+            return LaneContinuityBreak(ec.new_epoch)  # forked history
+
+        new_roster = ec.roster_dict()
+        if self.id not in new_roster:
+            return LaneEvicted(ec.new_epoch)         # we are the subject
+        eph, ct = next((e, c) for m, e, c in ec.sealed if m == self.id)
+        try:
+            secret = open_sealed(self.kem_key, eph, ct, ec.context())
+        except InvalidTag:
+            return BadSignature(ec.coordinator)
+
+        # re-key every lane from the fresh secret, bound to braid_close so the
+        # epoch chain isn't severed; reset positions and per-lane state
+        self.roster = new_roster
+        self.epoch = ec.new_epoch
+        new_r = roster_hash(new_roster)
+        self.lanes = {m: kdf(secret, L_INIT, m + new_r + ec.braid_close)
+                      for m in new_roster}
+        self.lane_seq = {m: 0 for m in new_roster}
+        self.seen = {m: {} for m in new_roster}
+        self.buffer = {m: {} for m in new_roster}
+        self.fp_hist = {m: {} for m in new_roster}
+        return LaneEpochChanged(self.epoch, ec.op)
