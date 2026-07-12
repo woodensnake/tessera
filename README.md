@@ -6,8 +6,11 @@ the decryption capability, a proof of full-history participation, and a
 tripwire that turns tampering, cloning, equivocation, and desync into
 loud, attributable failures.
 
-- **[PROTOCOL.md](PROTOCOL.md)** — the design (v0.4), including its open
-  problems. Start here.
+- **[STATUS.md](STATUS.md)** — honest current status and the questions that
+  most need answering. **If you're here to sanity-check the crypto, start
+  here.**
+- **[PROTOCOL.md](PROTOCOL.md)** — the design (v0.10), including its open
+  problems.
 - **`tessera.py`** — prototype of §5–§7 and §9: the per-message ratchet,
   wire format, receiver dispatch, Rung-1 retransmit recovery, **Rung-1.5
   resync** (return a laggard with no re-key — the storm fix), and the
